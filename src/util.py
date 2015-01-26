@@ -1686,8 +1686,8 @@ def parse_leap_seconds_list(fn):
     except IOError:
         raise LeapSecondsError('cannot read leap seconds file %s' % fn)
 
-    if texpires is None or tnow > texpires:
-        raise LeapSecondsOutdated('leap seconds list is outdated')
+    #if texpires is None or tnow > texpires:
+    #    raise LeapSecondsOutdated('leap seconds list is outdated')
 
     return data
 

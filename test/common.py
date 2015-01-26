@@ -6,12 +6,21 @@ from pyrocko import util
 import functools
 import logging
 import socket
+import os.path as op
+import tempfile
+
+import numpy as num
+
+from pyrocko import io, trace
 
 logger = logging.getLogger('pyrocko.test.common')
 
 benchmark_results = []
 
 g_matplotlib_inited = False
+
+H = 3600.
+D = 3600.*24.
 
 
 def matplotlib_use_agg():
@@ -24,6 +33,35 @@ def matplotlib_use_agg():
 
 def test_data_file_no_download(fn):
     return os.path.join(os.path.split(__file__)[0], 'data', fn)
+
+
+def make_dataset(dir=None, nstations=10, nchannels=3, tlen=10*D, deltat=0.01,
+                 tinc=1*H):
+
+    if dir is None:
+        dir = tempfile.mkdtemp('_test_squirrel_dataset')
+
+    tref = util.str_to_time('2015-01-01 00:00:00')
+
+    nblocks = int(round(tlen / tinc))
+
+    for istation in range(nstations):
+        for ichannel in range(nchannels):
+            for iblock in range(nblocks):
+                tmin = tref + iblock*tinc
+                nsamples = int(round(tinc/deltat))
+                ydata = num.random.randint(-1000, 1001, nsamples).astype(
+                    num.int32)
+
+                tr = trace.Trace(
+                    '', '%04i' % istation, '', '%03i' % ichannel,
+                    tmin=tmin,
+                    deltat=deltat,
+                    ydata=ydata)
+
+                io.save([tr], op.join(dir, '%s/%c/%b.mseed'))
+
+    return dir
 
 
 def test_data_file(fn):
