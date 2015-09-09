@@ -632,3 +632,57 @@ def mpl_color(x):
                 pass
 
     raise InvalidColorDef('invalid color definition: %s' % x)
+
+
+def plot_responses(
+        responses, labels=None, fmin=0.001, fmax=100., nf=100,
+        differentiate=0, integrate=0,
+        fig=None, axes_amp=None, axes_phase=None, show=False):
+
+    import matplotlib.pyplot as plt
+    import numpy as num
+    from pyrocko import trace
+
+    logfmin = math.log(fmin)
+    logfmax = math.log(fmax)
+    logf = num.linspace(logfmin, logfmax, nf)
+    freqs = num.exp(logf)
+
+    if axes_amp is None and axes_phase is None:
+        if fig is None:
+            fig = plt.figure()
+
+        axes_amp = fig.add_subplot(2, 1, 1)
+        axes_phase = fig.add_subplot(2, 1, 2)
+
+    for i, (response, label) in enumerate(zip(responses, labels)):
+        if differentiate != 0:
+            response = trace.MultiplyResponse(
+                [response, trace.IntegrationResponse(n=differentiate)])
+
+        if integrate != 0:
+            response = trace.MultiplyResponse(
+                [response, trace.DifferentiationResponse(n=integrate)])
+
+        coeffs = response.evaluate(freqs)
+
+        if axes_amp:
+            axes_amp.plot(
+                freqs, num.abs(coeffs), color=to01(i), label=label)
+
+        if axes_phase:
+            axes_phase.plot(
+                freqs, num.unwrap(num.angle(coeffs)),
+                color=to01(i))
+
+    if axes_amp:
+        axes_amp.set_xscale('log')
+        axes_amp.set_yscale('log')
+        if labels:
+            axes_amp.legend(loc='lower right', prop=dict(size=9))
+
+    if axes_phase:
+        axes_phase.set_xscale('log')
+
+    if show:
+        plt.show()
