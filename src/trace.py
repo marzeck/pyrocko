@@ -2726,6 +2726,25 @@ class MultiplyResponse(FrequencyResponse):
 
         return a
 
+    def simplify(self):
+        poles = []
+        zeros = []
+        constant = 1.0
+        responses = []
+        for resp in self.responses:
+            if isinstance(resp, PoleZeroResponse):
+                poles.extend(resp.poles)
+                zeros.extend(resp.zeros)
+                constant *= resp.constant
+            else:
+                responses.append(resp)
+
+        if poles or zeros or constant != 1.0:
+            responses[0:0] = [
+                PoleZeroResponse(poles=poles, zeros=zeros, constant=constant)]
+
+        self.responses = responses
+
 
 def asarray_1d(x, dtype):
     if isinstance(x, (list, tuple)) and x and isinstance(x[0], basestring):
