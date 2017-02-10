@@ -717,8 +717,12 @@ class TracesFile(TracesGroup):
             def kgen(tr):
                 return (tr.mtime, tr.tmin, tr.tmax) + tr.nslc_id
 
-            traces_ = io.load(self.abspath, format=self.format, getdata=True,
-                              substitutions=self.substitutions)
+            try:
+                traces_ = io.load(self.abspath, format=self.format, getdata=True,
+                                substitutions=self.substitutions)
+            except (io.FileLoadError, OSError), xerror:
+                logger.warn(xerror)
+                return False
 
             # prevent adding duplicate snippets from corrupt mseed files
             k_loaded = set()
