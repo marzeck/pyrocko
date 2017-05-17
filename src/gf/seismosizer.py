@@ -158,9 +158,8 @@ def discretize_rect_source(deltas, deltat, strike, dip, length, width,
     elif anchor == 'top_right' or anchor == 'bottom_right':
         anch_x = -.5 * length
         anch_y = .5 * width
-    if anchor == 'bottom':
-        anch_y *= -1.
-    if anchor == 'bottom_right' or anchor == 'bottom_left':
+    if anchor == 'bottom' or anchor == 'bottom_right' \
+                 or anchor == 'bottom_left':
         anch_y *= -1.
 
     points[:, 0] += anch_x
@@ -217,9 +216,8 @@ def outline_rect_source(strike, dip, length, width, anchor):
     elif anchor == 'top_right' or anchor == 'bottom_right':
         anch_x = -.5 * length
         anch_y = .5 * width
-    if anchor == 'bottom':
-        anch_y *= -1.
-    if anchor == 'bottom_right' or anchor == 'bottom_left':
+    if anchor == 'bottom' or anchor == 'bottom_right' \
+                 or anchor == 'bottom_left':
         anch_y *= -1.
 
     points[:, 0] += anch_x
