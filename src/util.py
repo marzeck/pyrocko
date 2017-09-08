@@ -758,7 +758,7 @@ def str_to_time(s, format='%Y-%m-%d %H:%M:%S.OPTFRAC'):
             raise TimeStrError(
                 '%s, string=%s, format=%s' % (str(e), s, format))
 
-        return t+tfrac
+        return hpfloat(t)+tfrac
 
     fracsec = 0.
     fixed_endings = '.FRAC', '.1FRAC', '.2FRAC', '.3FRAC'
@@ -817,9 +817,9 @@ def time_to_str(t, format='%Y-%m-%d %H:%M:%S.3FRAC'):
             format = '%Y-%m-%d %H:%M:%S'
 
     if util_ext is not None:
-        t0 = math.floor(t)
+        t0 = num.floor(t)
         try:
-            return util_ext.tts(int(t0), t - t0, format)
+            return util_ext.tts(int(t0), float(t - t0), format)
         except util_ext.UtilExtError, e:
             raise TimeStrError(
                 '%s, timestamp=%f, format=%s' % (str(e), t, format))

@@ -14,7 +14,7 @@ try:
 except:
     from yaml import SafeLoader, SafeDumper
 
-from pyrocko.util import time_to_str, str_to_time
+from pyrocko.util import time_to_str, str_to_time, hpfloat
 
 g_iprop = 0
 
@@ -65,6 +65,13 @@ def make_content_name(name):
         return name[:-1]
     else:
         return name
+
+
+def classnames(cls):
+    if isinstance(cls, tuple):
+        return '(%s)' % ', '.join(x.__name__ for x in cls)
+    else:
+        return cls.__name__
 
 
 def expand_stream_args(mode):
@@ -349,15 +356,21 @@ class TBase(object):
                 except (RegularizationError, ValueError):
                     raise ValidationError(
                         '%s: could not convert "%s" to type %s' % (
-                            self.xname(), val, self.cls.__name__))
+                            self.xname(), val, classnames(self.cls)))
             else:
                 raise ValidationError(
                     '%s: "%s" (type: %s) is not of type %s' % (
-                        self.xname(), val, type(val), self.cls.__name__))
+                        self.xname(), val, type(val), classnames(self.cls)))
 
         validator = self
-        if type(val) != self.cls and isinstance(val, self.cls):
-            validator = val.T.instance
+        if isinstance(self.cls, tuple):
+            for cls in self.cls:
+                if type(val) != cls and isinstance(val, cls):
+                    validator = val.T.instance
+
+        else:
+            if type(val) != self.cls and isinstance(val, self.cls):
+                validator = val.T.instance
 
         validator.validate_extra(val)
 
@@ -400,6 +413,9 @@ class TBase(object):
         if self.dummy_cls in guts_plain_dummy_types:
             return '``%s``' % self.cls.__name__
         else:
+            if isinstance(self.cls, tuple):
+                return 'fixme!'
+
             mod = self.cls.__module__
             cls = self.cls.__name__
             if self.dummy_cls is not self.cls:
@@ -944,7 +960,7 @@ class Tuple(Object):
 
 
 class Timestamp(Object):
-    dummy_for = float
+    dummy_for = (hpfloat, float)
 
     class __T(TBase):
 
@@ -955,7 +971,7 @@ class Timestamp(Object):
 
             elif isinstance(val, datetime.date):
                 tt = val.timetuple()
-                val = float(calendar.timegm(tt))
+                val = hpfloat(calendar.timegm(tt))
 
             elif isinstance(val, str) or isinstance(val, unicode):
                 val = val.strip()
@@ -964,11 +980,11 @@ class Timestamp(Object):
                     val = val.replace('T', ' ', 1)
                 val = str_to_time(val)
 
-            elif isinstance(val, int):
-                val = float(val)
+            elif isinstance(val, (int, float)):
+                val = hpfloat(val)
 
             else:
-                raise ValidationError('%s: cannot convert "%s" to float' % (
+                raise ValidationError('%s: cannot convert "%s" to hpfloat' % (
                     self.xname(), val))
 
             return val
@@ -1272,9 +1288,12 @@ class Constructor(object):
         name = name.split()[-1]
         if self.stack and self.stack[-1][1] is not None:
             cls = self.stack[-1][1].T.xmltagname_to_class.get(name, None)
-            if cls is not None and (
-                    not issubclass(cls, Object) or issubclass(cls, SObject)):
+            if isinstance(cls, tuple):
                 cls = None
+            else:
+                if cls is not None and (
+                        not issubclass(cls, Object) or issubclass(cls, SObject)):
+                    cls = None
         else:
             cls = g_xmltagname_to_class.get(name, None)
 
