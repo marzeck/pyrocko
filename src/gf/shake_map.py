@@ -7,7 +7,7 @@ guts_prefix = 'pf'
 
 
 class ShakeMapQuantity(StringChoice):
-    choices = ['pga']
+    choices = ['pga', 'pgv', 'intensity']
 
 
 class ShakeMap(Object):
