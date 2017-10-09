@@ -16,8 +16,8 @@ import logging
 import traceback
 import tempfile
 
-from PyQt5 import QtCore as qc
-from PyQt5 import QtWidgets as qw
+from PyQt4 import QtCore as qc
+from PyQt4 import QtGui as qg
 
 from pyrocko import pile, config
 
@@ -34,14 +34,12 @@ Marker, load_markers, save_markers  # noqa
 logger = logging.getLogger('pyrocko.gui.snuffling')
 
 
-class MyFrame(qw.QFrame):
-    widgetVisibilityChanged = qc.pyqtSignal(bool)
-
+class MyFrame(qg.QFrame):
     def showEvent(self, ev):
-        self.widgetVisibilityChanged.emit(True)
+        self.emit(qc.SIGNAL('widgetVisibilityChanged(bool)'), True)
 
     def hideEvent(self, ev):
-        self.widgetVisibilityChanged.emit(False)
+        self.emit(qc.SIGNAL('widgetVisibilityChanged(bool)'), False)
 
 
 class Param(object):
@@ -366,7 +364,9 @@ class Snuffling(object):
         '''
 
         viewer = self.get_viewer()
-        viewer.pile_has_changed_signal.connect(
+        viewer.connect(
+            viewer,
+            qc.SIGNAL('pile_has_changed_signal()'),
             self.pile_changed)
 
     def disable_pile_changed_notifications(self):
@@ -375,7 +375,9 @@ class Snuffling(object):
         '''
 
         viewer = self.get_viewer()
-        viewer.pile_has_changed_signal.disconnect(
+        viewer.disconnect(
+            viewer,
+            qc.SIGNAL('pile_has_changed_signal()'),
             self.pile_changed)
 
     def pile_changed(self):
@@ -408,7 +410,7 @@ class Snuffling(object):
         '''
 
         try:
-            box = qw.QMessageBox(self.get_viewer())
+            box = qg.QMessageBox(self.get_viewer())
             box.setText('%s: %s' % (kind.capitalize(), message))
             box.exec_()
         except NoViewerSet:
@@ -507,7 +509,7 @@ class Snuffling(object):
 
         f = PixmapFrame(filename)
 
-        scroll_area = qw.QScrollArea()
+        scroll_area = qg.QScrollArea()
         scroll_area.setWidget(f)
         scroll_area.setWidgetResizable(True)
 
@@ -1050,24 +1052,26 @@ class Snuffling(object):
         self._param_controls = {}
         if params or self._force_panel:
             sarea = MyScrollArea(parent.get_panel_parent_widget())
-            sarea.setFrameStyle(qw.QFrame.NoFrame)
-            sarea.setSizePolicy(qw.QSizePolicy(
-                qw.QSizePolicy.Expanding, qw.QSizePolicy.Expanding))
+            sarea.setFrameStyle(qg.QFrame.NoFrame)
+            sarea.setSizePolicy(qg.QSizePolicy(
+                qg.QSizePolicy.Expanding, qg.QSizePolicy.Expanding))
             frame = MyFrame(sarea)
-            frame.widgetVisibilityChanged.connect(
+            self.get_viewer().connect(
+                frame,
+                qc.SIGNAL('widgetVisibilityChanged(bool)'),
                 self.panel_visibility_changed)
 
-            frame.setSizePolicy(qw.QSizePolicy(
-                qw.QSizePolicy.Expanding, qw.QSizePolicy.Minimum))
-            frame.setFrameStyle(qw.QFrame.NoFrame)
+            frame.setSizePolicy(qg.QSizePolicy(
+                qg.QSizePolicy.Expanding, qg.QSizePolicy.Minimum))
+            frame.setFrameStyle(qg.QFrame.NoFrame)
             sarea.setWidget(frame)
             sarea.setWidgetResizable(True)
-            layout = qw.QGridLayout()
+            layout = qg.QGridLayout()
             layout.setContentsMargins(0, 0, 0, 0)
             layout.setSpacing(0)
             frame.setLayout(layout)
 
-            parlayout = qw.QGridLayout()
+            parlayout = qg.QGridLayout()
 
             irow = 0
             ipar = 0
@@ -1092,7 +1096,9 @@ class Snuffling(object):
                         param.default,
                         iparam)
 
-                    param_control.valchange.connect(
+                    self.get_viewer().connect(
+                        param_control,
+                        qc.SIGNAL("valchange(PyQt_PyObject,int)"),
                         self.modified_snuffling_panel)
 
                     self._param_controls[param.ident] = param_control
@@ -1105,7 +1111,9 @@ class Snuffling(object):
                 elif isinstance(param, Choice):
                     param_widget = ChoiceControl(
                         param.ident, param.default, param.choices, param.name)
-                    param_widget.choosen.connect(
+                    self.get_viewer().connect(
+                        param_widget,
+                        qc.SIGNAL('choosen(PyQt_PyObject,PyQt_PyObject)'),
                         self.choose_on_snuffling_panel)
 
                     self._param_controls[param.ident] = param_widget
@@ -1117,65 +1125,75 @@ class Snuffling(object):
                     have_switches = True
 
             if have_params:
-                parframe = qw.QFrame(sarea)
-                parframe.setSizePolicy(qw.QSizePolicy(
-                    qw.QSizePolicy.Expanding, qw.QSizePolicy.Minimum))
+                parframe = qg.QFrame(sarea)
+                parframe.setSizePolicy(qg.QSizePolicy(
+                    qg.QSizePolicy.Expanding, qg.QSizePolicy.Minimum))
                 parframe.setLayout(parlayout)
                 layout.addWidget(parframe, irow, 0)
                 irow += 1
 
             if have_switches:
-                swlayout = qw.QGridLayout()
+                swlayout = qg.QGridLayout()
                 isw = 0
                 for iparam, param in enumerate(params):
                     if isinstance(param, Switch):
                         param_widget = SwitchControl(
                             param.ident, param.default, param.name)
-                        param_widget.sw_toggled.connect(
+                        self.get_viewer().connect(
+                            param_widget,
+                            qc.SIGNAL('sw_toggled(PyQt_PyObject,bool)'),
                             self.switch_on_snuffling_panel)
 
                         self._param_controls[param.ident] = param_widget
                         swlayout.addWidget(param_widget, isw/10, isw % 10)
                         isw += 1
 
-                swframe = qw.QFrame(sarea)
-                swframe.setSizePolicy(qw.QSizePolicy(
-                    qw.QSizePolicy.Expanding, qw.QSizePolicy.Minimum))
+                swframe = qg.QFrame(sarea)
+                swframe.setSizePolicy(qg.QSizePolicy(
+                    qg.QSizePolicy.Expanding, qg.QSizePolicy.Minimum))
                 swframe.setLayout(swlayout)
                 layout.addWidget(swframe, irow, 0)
                 irow += 1
 
-            butframe = qw.QFrame(sarea)
-            butframe.setSizePolicy(qw.QSizePolicy(
-                qw.QSizePolicy.Expanding, qw.QSizePolicy.Minimum))
-            butlayout = qw.QHBoxLayout()
+            butframe = qg.QFrame(sarea)
+            butframe.setSizePolicy(qg.QSizePolicy(
+                qg.QSizePolicy.Expanding, qg.QSizePolicy.Minimum))
+            butlayout = qg.QHBoxLayout()
             butframe.setLayout(butlayout)
 
-            live_update_checkbox = qw.QCheckBox('Auto-Run')
+            live_update_checkbox = qg.QCheckBox('Auto-Run')
             if self._live_update:
                 live_update_checkbox.setCheckState(qc.Qt.Checked)
 
             butlayout.addWidget(live_update_checkbox)
-            live_update_checkbox.toggled.connect(
+            self.get_viewer().connect(
+                live_update_checkbox,
+                qc.SIGNAL("toggled(bool)"),
                 self.live_update_toggled)
 
-            help_button = qw.QPushButton('Help')
+            help_button = qg.QPushButton('Help')
             butlayout.addWidget(help_button)
-            help_button.clicked.connect(
+            self.get_viewer().connect(
+                help_button,
+                qc.SIGNAL("clicked()"),
                 self.help_button_triggered)
 
-            clear_button = qw.QPushButton('Clear')
+            clear_button = qg.QPushButton('Clear')
             butlayout.addWidget(clear_button)
-            clear_button.clicked.connect(
+            self.get_viewer().connect(
+                clear_button,
+                qc.SIGNAL("clicked()"),
                 self.clear_button_triggered)
 
-            call_button = qw.QPushButton('Run')
+            call_button = qg.QPushButton('Run')
             butlayout.addWidget(call_button)
-            call_button.clicked.connect(
+            self.get_viewer().connect(
+                call_button,
+                qc.SIGNAL("clicked()"),
                 self.call_button_triggered)
 
             for name, method in self._triggers:
-                but = qw.QPushButton(name)
+                but = qg.QPushButton(name)
 
                 def call_and_update(method):
                     def f():
@@ -1191,7 +1209,9 @@ class Snuffling(object):
                         self.get_viewer().update()
                     return f
 
-                but.clicked.connect(
+                self.get_viewer().connect(
+                    but,
+                    qc.SIGNAL('clicked()'),
                     call_and_update(method))
 
                 butlayout.addWidget(but)
@@ -1199,8 +1219,8 @@ class Snuffling(object):
             layout.addWidget(butframe, irow, 0)
 
             irow += 1
-            spacer = qw.QSpacerItem(
-                0, 0, qw.QSizePolicy.Expanding, qw.QSizePolicy.Expanding)
+            spacer = qg.QSpacerItem(
+                0, 0, qg.QSizePolicy.Expanding, qg.QSizePolicy.Expanding)
 
             layout.addItem(spacer, irow, 0)
 
@@ -1214,9 +1234,11 @@ class Snuffling(object):
         Create the help menu item for the snuffling.
         '''
 
-        item = qw.QAction(self.get_name(), None)
+        item = qg.QAction(self.get_name(), None)
 
-        item.triggered.connect(
+        self.get_viewer().connect(
+            item,
+            qc.SIGNAL("triggered(bool)"),
             self.help_button_triggered)
 
         return item
@@ -1229,12 +1251,12 @@ class Snuffling(object):
         menu entry is wanted.
         '''
 
-        item = qw.QAction(self.get_name(), None)
+        item = qg.QAction(self.get_name(), None)
         item.setCheckable(
             self._have_pre_process_hook or self._have_post_process_hook)
 
-        item.triggered.connect(
-            self.menuitem_triggered)
+        self.get_viewer().connect(
+            item, qc.SIGNAL("triggered(bool)"), self.menuitem_triggered)
 
         return item
 
@@ -1256,8 +1278,8 @@ class Snuffling(object):
         if not dir and self._previous_output_filename:
             dir = self._previous_output_filename
 
-        fn, _ = qw.QFileDialog.getSaveFileName(
-            self.get_viewer(), caption, dir, filter, selected_filter)
+        fn = qg.QFileDialog.getSaveFileName(
+            self.get_viewer(), caption, dir, filter) # selected_filter)
 
         if not fn:
             raise UserCancelled()
@@ -1277,14 +1299,14 @@ class Snuffling(object):
         if not dir and self._previous_input_directory:
             dir = self._previous_input_directory
 
-        dn = qw.QFileDialog.getExistingDirectory(
-            None, caption, dir, qw.QFileDialog.ShowDirsOnly)
+        dirn = qg.QFileDialog.getExistingDirectory(
+            None, caption, dir, qg.QFileDialog.ShowDirsOnly)
 
-        if not dn:
+        if not dirn:
             raise UserCancelled()
 
-        self._previous_input_directory = dn
-        return str(dn)
+        self._previous_input_directory = dirn
+        return str(dirn)
 
     def input_filename(self, caption='Open File', dir='', filter='',
                        selected_filter=None):
@@ -1299,7 +1321,7 @@ class Snuffling(object):
         if not dir and self._previous_input_filename:
             dir = self._previous_input_filename
 
-        fn, _ = qw.QFileDialog.getOpenFileName(
+        fn = qg.QFileDialog.getOpenFileName(
             self.get_viewer(),
             caption,
             dir,
@@ -1320,7 +1342,7 @@ class Snuffling(object):
         dialog.
         '''
 
-        inp, ok = qw.QInputDialog.getText(self.get_viewer(), 'Input', caption)
+        inp, ok = qg.QInputDialog.getText(self.get_viewer(), 'Input', caption)
 
         if not ok:
             raise UserCancelled()
@@ -1413,16 +1435,16 @@ class Snuffling(object):
 
         if self.__doc__:
             if self.__doc__.strip().startswith('<html>'):
-                    doc = qw.QLabel(self.__doc__)
+                    doc = qg.QLabel(self.__doc__)
             else:
                 try:
                     import markdown
-                    doc = qw.QLabel(markdown.markdown(self.__doc__))
+                    doc = qg.QLabel(markdown.markdown(self.__doc__))
 
                 except ImportError:
-                    doc = qw.QLabel(self.__doc__)
+                    doc = qg.QLabel(self.__doc__)
         else:
-            doc = qw.QLabel('This snuffling does not provide any online help.')
+            doc = qg.QLabel('This snuffling does not provide any online help.')
 
         labels = [doc]
 
@@ -1431,7 +1453,7 @@ class Snuffling(object):
             import urllib.parse
             code = open(self._filename, 'r').read()
 
-            doc_src = qw.QLabel(
+            doc_src = qg.QLabel(
                 '''<html><body>
 <hr />
 <center><em>May the source be with you, young Skywalker!</em><br /><br />
@@ -1725,7 +1747,7 @@ class BrokenSnufflingModule(Exception):
     pass
 
 
-class MyScrollArea(qw.QScrollArea):
+class MyScrollArea(qg.QScrollArea):
 
     def sizeHint(self):
         s = qc.QSize()
@@ -1734,17 +1756,16 @@ class MyScrollArea(qw.QScrollArea):
         return s
 
 
-class SwitchControl(qw.QCheckBox):
-    sw_toggled = qc.pyqtSignal(object, bool)
-
+class SwitchControl(qg.QCheckBox):
     def __init__(self, ident, default, *args):
-        qw.QCheckBox.__init__(self, *args)
+        qg.QCheckBox.__init__(self, *args)
         self.ident = ident
         self.setChecked(default)
-        self.toggled.connect(self._sw_toggled)
+        self.connect(self, qc.SIGNAL('toggled(bool)'), self.sw_toggled)
 
-    def _sw_toggled(self, state):
-        self.sw_toggled.emit(self.ident, state)
+    def sw_toggled(self, state):
+        self.emit(
+            qc.SIGNAL('sw_toggled(PyQt_PyObject,bool)'), self.ident, state)
 
     def set_value(self, state):
         self.blockSignals(True)
@@ -1752,15 +1773,13 @@ class SwitchControl(qw.QCheckBox):
         self.blockSignals(False)
 
 
-class ChoiceControl(qw.QFrame):
-    choosen = qc.pyqtSignal(object, object)
-
+class ChoiceControl(qg.QFrame):
     def __init__(self, ident, default, choices, name, *args):
-        qw.QFrame.__init__(self, *args)
-        self.label = qw.QLabel(name, self)
+        qg.QFrame.__init__(self, *args)
+        self.label = qg.QLabel(name, self)
         self.label.setMinimumWidth(120)
-        self.cbox = qw.QComboBox(self)
-        self.layout = qw.QHBoxLayout(self)
+        self.cbox = qg.QComboBox(self)
+        self.layout = qg.QHBoxLayout(self)
         self.layout.addWidget(self.label)
         self.layout.addWidget(self.cbox)
         self.layout.setContentsMargins(0, 0, 0, 0)
@@ -1768,10 +1787,10 @@ class ChoiceControl(qw.QFrame):
         self.ident = ident
         self.choices = choices
         for ichoice, choice in enumerate(choices):
-            self.cbox.addItem(choice)
+            self.cbox.addItem(qc.QString(choice))
 
         self.set_value(default)
-        self.cbox.activated.connect(self.emit_choosen)
+        self.connect(self.cbox, qc.SIGNAL('activated(int)'), self.choosen)
 
     def set_choices(self, choices):
         icur = self.cbox.currentIndex()
@@ -1792,8 +1811,9 @@ class ChoiceControl(qw.QFrame):
             self.set_value(choices[0])
             return choices[0]
 
-    def emit_choosen(self, i):
-        self.choosen.emit(
+    def choosen(self, i):
+        self.emit(qc.SIGNAL(
+            'choosen(PyQt_PyObject,PyQt_PyObject)'),
             self.ident,
             self.choices[i])
 

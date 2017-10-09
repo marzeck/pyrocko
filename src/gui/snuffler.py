@@ -37,14 +37,11 @@ from pyrocko.io import stationxml
 
 from . import pile_viewer     # noqa
 
-from PyQt5 import Qt
-from PyQt5 import QtCore as qc
-from PyQt5 import QtGui as qg
-from PyQt5 import QtWidgets as qw
-from PyQt5 import QtNetwork as qn
+from PyQt4 import QtCore as qc
+from PyQt4 import QtGui as qg
+from PyQt4 import QtNetwork as qn
 
 logger = logging.getLogger('pyrocko.gui.snuffler')
-Qt.QCoreApplication.setAttribute(qc.Qt.AA_ShareOpenGLContexts, True)
 
 
 class AcquisitionThread(qc.QThread):
@@ -260,17 +257,12 @@ class PollInjector(qc.QObject, pile.Injector):
 
 
 class Connection(qc.QObject):
-
-    received = qc.pyqtSignal(object, object)
-    disconnected = qc.pyqtSignal(object)
-
     def __init__(self, parent, sock):
         qc.QObject.__init__(self, parent)
         self.socket = sock
-        self.readyRead.connect(
-            self.handle_read)
-        self.disconnected.connect(
-            self.handle_disconnected)
+        self.connect(sock, qc.SIGNAL('readyRead()'), self.handle_read)
+        self.connect(sock, qc.SIGNAL('disconnected()'),
+                     self.handle_disconnected)
         self.nwanted = 8
         self.reading_size = True
         self.handler = None
@@ -300,7 +292,8 @@ class Connection(qc.QObject):
                 self.reading_size = True
 
     def handle_received(self, obj):
-        self.received.emit(self, obj)
+        self.emit(
+            qc.SIGNAL('received(PyQt_PyObject,PyQt_PyObject)'), self, obj)
 
     def ship(self, obj):
         data = self.compressor.compress(pickle.dumps(obj))
@@ -311,7 +304,7 @@ class Connection(qc.QObject):
         self.nbytes_sent += len(data)+len(data_end) + 8
 
     def handle_disconnected(self):
-        self.disconnected.emit(self)
+        self.emit(qc.SIGNAL('disconnected(PyQt_PyObject)'), self)
 
     def close(self):
         self.socket.close()
@@ -328,10 +321,14 @@ class ConnectionHandler(qc.QObject):
 
     def set_connection(self, connection):
         self.connection = connection
-        connection.received.connect(
+        self.connect(
+            connection,
+            qc.SIGNAL('received(PyQt_PyObject,PyQt_PyObject)'),
             self._handle_received)
 
-        connection.connect(
+        self.connect(
+            connection,
+            qc.SIGNAL('disconnected(PyQt_PyObject)'),
             self.handle_disconnected)
 
         for obj in self.queue:
@@ -366,7 +363,7 @@ class SimpleConnectionHandler(ConnectionHandler):
         self.mapping[command](*args)
 
 
-class MyMainWindow(qw.QMainWindow):
+class MyMainWindow(qg.QMainWindow):
 
     def __init__(self, app, *args):
         qg.QMainWindow.__init__(self, *args)
@@ -376,23 +373,20 @@ class MyMainWindow(qw.QMainWindow):
         self.app.pile_viewer.get_view().keyPressEvent(ev)
 
 
-class SnufflerTabs(qw.QTabWidget):
+class SnufflerTabs(qg.QTabWidget):
     def __init__(self, parent):
-        qw.QTabWidget.__init__(self, parent)
+        qg.QTabWidget.__init__(self, parent)
         if hasattr(self, 'setTabsClosable'):
             self.setTabsClosable(True)
-
-        self.tabCloseRequested.connect(
-            self.removeTab)
-
+        self.connect(self, qc.SIGNAL('tabCloseRequested(int)'), self.removeTab)
         if hasattr(self, 'setDocumentMode'):
             self.setDocumentMode(True)
 
     def hide_close_button_on_first_tab(self):
         tbar = self.tabBar()
         if hasattr(tbar, 'setTabButton'):
-            tbar.setTabButton(0, qw.QTabBar.LeftSide, None)
-            tbar.setTabButton(0, qw.QTabBar.RightSide, None)
+            tbar.setTabButton(0, qg.QTabBar.LeftSide, None)
+            tbar.setTabButton(0, qg.QTabBar.RightSide, None)
 
     def append_tab(self, widget, name):
         widget.setParent(self)
@@ -412,7 +406,7 @@ class SnufflerTabs(qw.QTabWidget):
     def removeTab(self, index):
         w = self.widget(index)
         w.close()
-        qw.QTabWidget.removeTab(self, index)
+        qg.QTabWidget.removeTab(self, index)
 
     def tabRemoved(self, index):
         self.tabbar_visibility()
@@ -425,19 +419,18 @@ class SnufflerTabs(qw.QTabWidget):
 
     def keyPressEvent(self, event):
         if event.text() == 'd':
-            self.tabCloseRequested.emit(
-                self.currentIndex())
+            self.emit(qc.SIGNAL('tabCloseRequested(int)'), self.currentIndex())
         else:
             self.parent().keyPressEvent(event)
 
 
-class SnufflerWindow(qw.QMainWindow):
+class SnufflerWindow(qg.QMainWindow):
 
     def __init__(
             self, pile, stations=None, events=None, markers=None, ntracks=12,
             follow=None, controls=True, opengl=False):
 
-        qw.QMainWindow.__init__(self)
+        qg.QMainWindow.__init__(self)
 
         self.dockwidget_to_toggler = {}
         self.dockwidgets = []
@@ -513,7 +506,7 @@ class SnufflerWindow(qw.QMainWindow):
 
         dws = [x for x in self.dockwidgets if self.dockWidgetArea(x) == where]
 
-        dockwidget = qw.QDockWidget(name, self)
+        dockwidget = qg.QDockWidget(name, self)
         self.dockwidgets.append(dockwidget)
         dockwidget.setWidget(panel)
         panel.setParent(dockwidget)
@@ -524,19 +517,21 @@ class SnufflerWindow(qw.QMainWindow):
 
         self.toggle_panel(dockwidget, visible)
 
-        mitem = qw.QAction(name, None)
+        mitem = qg.QAction(name, None)
 
         def toggle_panel(checked):
             self.toggle_panel(dockwidget, True)
 
-        mitem.triggered.connect(toggle_panel)
+        self.connect(mitem, qc.SIGNAL('triggered(bool)'), toggle_panel)
 
         if volatile:
             def visibility(visible):
                 if not visible:
                     self.remove_panel(panel)
 
-            dockwidget.visibilityChanged.connect(
+            self.connect(
+                dockwidget,
+                qc.SIGNAL('visibilityChanged(bool)'),
                 visibility)
 
         self.get_view().add_panel_toggler(mitem)
@@ -584,11 +579,11 @@ class SnufflerWindow(qw.QMainWindow):
         return self.closing
 
 
-class Snuffler(qw.QApplication):
+class Snuffler(qg.QApplication):
 
     def __init__(self):
-        qw.QApplication.__init__(self, sys.argv)
-        self.lastWindowClosed.connect(self.myQuit)
+        qg.QApplication.__init__(self, sys.argv)
+        self.connect(self, qc.SIGNAL("lastWindowClosed()"), self.myQuit)
         self.server = None
         self.loader = None
 
@@ -604,8 +599,7 @@ class Snuffler(qw.QApplication):
         self.connections = []
         s = qn.QTcpServer(self)
         s.listen(qn.QHostAddress.LocalHost)
-        s.newConnection.connect(
-            self.handle_accept)
+        self.connect(s, qc.SIGNAL('newConnection()'), self.handle_accept)
         self.server = s
 
     def start_loader(self):
@@ -622,10 +616,14 @@ class Snuffler(qw.QApplication):
         con = Connection(self, sock)
         self.connections.append(con)
 
-        con.disconnected.connect(
+        self.connect(
+            con,
+            qc.SIGNAL('disconnected(PyQt_PyObject)'),
             self.handle_disconnected)
 
-        con.received.connect(
+        self.connect(
+            con,
+            qc.SIGNAL('received(PyQt_PyObject,PyQt_PyObject)'),
             self.handle_received_ticket)
 
     def handle_disconnected(self, connection):
@@ -640,7 +638,9 @@ class Snuffler(qw.QApplication):
         ticket = object
         if ticket in self.connection_handlers:
             h = self.connection_handlers[ticket]
-            connection.received.disconnect(
+            self.disconnect(
+                connection,
+                qc.SIGNAL('received(PyQt_PyObject,PyQt_PyObject)'),
                 self.handle_received_ticket)
 
             h.set_connection(connection)
@@ -660,7 +660,7 @@ class Snuffler(qw.QApplication):
 
             return True
         else:
-            return qw.QApplication.event(self, e)
+            return qg.QApplication.event(self, e)
 
     def load(self, pathes, cachedirname, pattern, format):
         if not self.loader:
@@ -799,7 +799,7 @@ def snuffle(pile=None, **kwargs):
 
 def snuffler_from_commandline(args=None):
     if args is None:
-        args = sys.argv[1:]
+        args = sys.argv
 
     usage = '''usage: %prog [options] waveforms ...'''
     parser = OptionParser(usage=usage)

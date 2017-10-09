@@ -4,8 +4,8 @@
 # ---|P------/S----------~Lg----------
 from __future__ import absolute_import
 
-from PyQt5 import QtCore as qc
-from PyQt5 import QtWidgets as qw
+from PyQt4 import QtCore as qc
+from PyQt4 import QtGui as qg
 
 from .util import make_QPolygonF, LinValControl
 from .pile_viewer import Projection
@@ -14,10 +14,10 @@ from pyrocko import beachball, moment_tensor as mtm
 from pyrocko import plot
 
 
-class BeachballView(qw.QWidget):
+class BeachballView(qg.QWidget):
 
     def __init__(self, *args):
-        qw.QWidget.__init__(self, *args)
+        qg.QWidget.__init__(self, *args)
         mt = mtm.MomentTensor(m=mtm.symmat6(1., -1., 2., 0., -2., 1.))
         self._mt = mt
         self.set_moment_tensor(mt)
@@ -29,8 +29,8 @@ class BeachballView(qw.QWidget):
     def paintEvent(self, paint_ev):
         '''Called by QT whenever widget needs to be painted.'''
 
-        painter = qw.QPainter(self)
-        painter.setRenderHint(qw.QPainter.Antialiasing)
+        painter = qg.QPainter(self)
+        painter.setRenderHint(qg.QPainter.Antialiasing)
         self.drawit(painter)
 
     def drawit(self, p):
@@ -65,10 +65,10 @@ class BeachballView(qw.QWidget):
                 lines, lines_lower, lines_upper) in beachball.eig2gx(eig):
 
             color = group_to_color[group]
-            brush = qw.QBrush(qw.QColor(*color))
+            brush = qg.QBrush(qg.QColor(*color))
             p.setBrush(brush)
 
-            pen = qw.QPen(qw.QColor(*color))
+            pen = qg.QPen(qg.QColor(*color))
             pen.setWidth(1)
             p.setPen(pen)
 
@@ -78,7 +78,7 @@ class BeachballView(qw.QWidget):
                 p.drawPolygon(points)
 
             color = (0, 0, 0)
-            pen = qw.QPen(qw.QColor(*color))
+            pen = qg.QPen(qg.QColor(*color))
             pen.setWidth(2)
             p.setPen(pen)
 
@@ -88,12 +88,10 @@ class BeachballView(qw.QWidget):
                 p.drawPolyline(points)
 
 
-class MomentTensorEditor(qw.QFrame):
-
-    moment_tensor_changed = qc.pyqtSignal(object)
+class MomentTensorEditor(qg.QFrame):
 
     def __init__(self, *args):
-        qw.QFrame.__init__(self, *args)
+        qg.QFrame.__init__(self, *args)
 
         self._mt = mtm.MomentTensor(m=mtm.symmat6(1., -1., 2., 0., -2., 1.))
 
@@ -105,7 +103,7 @@ class MomentTensorEditor(qw.QFrame):
             (LinValControl, 'Dip 2', 0., 90., 0., 4),
             (LinValControl, 'Slip-Rake 2', -180., 180., 0., 5)]
 
-        layout = qw.QGridLayout()
+        layout = qg.QGridLayout()
         self.setLayout(layout)
 
         val_controls = []
@@ -115,7 +113,8 @@ class MomentTensorEditor(qw.QFrame):
             val_controls.append(val_control)
             for icol, widget in enumerate(val_control.widgets()):
                 layout.addWidget(widget, irow, icol)
-            val_control.valchanged.connect(
+            self.connect(
+                val_control, qc.SIGNAL('valchange(PyQt_PyObject,int)'),
                 self.valchange)
 
         self.val_controls = val_controls
@@ -140,5 +139,5 @@ class MomentTensorEditor(qw.QFrame):
 
         self.adjust_values()
 
-        self.moment_tensor_changed.emit(
-            self._mt)
+        self.emit(
+            qc.SIGNAL('moment_tensor_changed(PyQt_PyObject)'), self._mt)
