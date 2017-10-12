@@ -200,6 +200,14 @@ class GFSourcesTestCase(unittest.TestCase):
 
         # plot_sources(sources)
 
+    def test_sato_source(self):
+        sato = gf.SatoSource(
+            magnitude = 6.0,
+            depth = 10000.)
+
+        print(sato)
+        for t in num.linspace(-1., 5.
+
 
 if __name__ == '__main__':
     util.setup_logging('test_gf_sources', 'warning')

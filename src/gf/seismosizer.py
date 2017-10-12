@@ -895,6 +895,12 @@ class SmoothRampSTF(STF):
                 self.duration, self.rise_ratio, self.anchor)
 
 
+class BruneSTF(STF):
+
+    def discretize_t(self, deltat, tref):
+        pass
+
+
 class STFMode(StringChoice):
     choices = ['pre', 'post']
 
@@ -1634,6 +1640,58 @@ class RectangularSource(DCSource):
                 return latlon
             else:
                 return latlon[:, ::-1]
+
+
+class SatoSource(DCSource):
+    '''
+    The circular rupture model of Sato and Hirasawa (1973)
+    '''
+
+    stress_drop = Float.T(
+        default=3.0e6,
+        help='stress drop [Pa]')
+
+    velocity = Float.T(
+        default=1900.,
+        optional=True,
+        help='speed of rupture front [m/s]')
+
+    radius = Float.T(
+        optional=True,
+        help='radius where rupture stops [m]')
+
+    duration = Float.T(
+        optional=True,
+        help='duration of rupture [s]')
+
+    shear_modulus = Float.T(
+        optional=True,
+        help='shear modulus [Pa]')
+
+    def __init__(self, **kwargs):
+        DCSource.__init__(self, **kwargs)
+        self.setup_params()
+
+    def base_key(self):
+        return DCSource.base_key(self) + (
+            self.stressdrop,
+            self.velocity)
+
+    def setup_params(self):
+        self.radius = pow(
+            self.moment * 7.0 / (16.0 * self.stress_drop), 1.0/3.0)
+
+        self.duration = self.radius / self.velocity
+
+    def slip_function(self, t, r, shear_moduli):
+        r = num.asarray(r, dtype=float)
+        t = num.maximum(t, self.duration)
+        shear_moduli = self.shear_modulus
+        displacement = 24. * self.stress_drop * self.velocity \
+            / (7. * math.pi * shear_moduli) \
+            * num.sqrt(t**2 - r**2/self.velocity**2) \
+            * (t >= r/self.velocity).astype(num.float) \
+            * (self.radius >= r)
 
 
 class DoubleDCSource(SourceWithMagnitude):
@@ -3072,6 +3130,7 @@ source_classes = [
     CLVDSource,
     MTSource,
     RectangularSource,
+    SatoSource,
     DoubleDCSource,
     RingfaultSource,
     SFSource,
