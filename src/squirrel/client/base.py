@@ -38,7 +38,6 @@ class Selection(object):
 
 class Source(object):
 
-
     def update_channel_inventory(self, squirrel, selection):
 
         '''

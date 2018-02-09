@@ -1,4 +1,6 @@
+from pyrocko.io.io_common import get_mtime  # noqa
 from pyrocko.squirrel import model
+
 
 km = 1000.
 

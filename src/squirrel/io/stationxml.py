@@ -1,5 +1,7 @@
 import time
+from pyrocko.io.io_common import get_mtime  # noqa
 from pyrocko.squirrel import model
+
 
 Y = 60*60*24*365
 

@@ -1,3 +1,4 @@
+from pyrocko.io.io_common import get_mtime  # noqa
 from pyrocko.squirrel import model
 import logging
 from builtins import str as newstr
@@ -26,7 +27,7 @@ def detect_pyrocko_stations(first512):
 
                 return True
 
-            except:
+            except Exception:
                 raise
                 return False
 

@@ -3,6 +3,7 @@ import numpy as num
 from pyrocko import util
 from pyrocko.guts import Object, String, Timestamp, Float, Int, Unicode
 from pyrocko.guts_array import Array
+from pyrocko.squirrel import io
 
 
 def str_or_none(x):
@@ -224,6 +225,12 @@ class Nut(Object):
 
     def __ne__(self, other):
         return not (self == other)
+
+    def get_io_backend(self):
+        return io.get_format_provider(self.file_format)
+
+    def file_modified(self):
+        return self.get_io_backend().get_mtime(self.file_name) != self.file_mtime
 
     @property
     def equality_values(self):

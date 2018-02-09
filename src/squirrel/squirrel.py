@@ -3,6 +3,7 @@ import threading
 import sqlite3
 from collections import defaultdict, Counter
 
+from pyrocko.io_common import FileLoadError
 from pyrocko.squirrel import model, io
 from pyrocko.squirrel.client import fdsn
 
@@ -28,33 +29,49 @@ def make_unique_name():
 
 
 class Selection(object):
-    def __init__(self, squirrel):
+    def __init__(self, database):
         self.name = 'selection_' + make_unique_name()
-        self.name_nuts = self.name + '_nuts'
-        self._squirrel = squirrel
-        self._conn = self._squirrel.get_connection()
+        self._database = database
+        self._conn = self._database.get_connection()
+        self._sources = []
+
+        self._names = {
+            'db': 'temp',
+            'file_states': self.name + '_file_states'}
 
         self._conn.execute(
-            'CREATE TEMP TABLE %s (file_name text)' % self.name)
+            '''CREATE TEMP TABLE %(db)s.%(file_states)s (
+                file_name text PRIMARY KEY,
+                file_state integer)''' % self._names)
 
-        self._squirrel.selections.append(self)
+        self._database.selections.append(self)
 
-    def add(self, filenames):
-        self._conn.executemany(
-            'INSERT INTO temp.%s VALUES (?)' % self.name,
-            ((s,) for s in filenames))
+    def database(self):
+        return self._database
 
     def delete(self):
         self._conn.execute(
-            'DROP TABLE temp.%s' % self.name)
+            'DROP TABLE %(db)s.%(file_states)s' % self._names)
 
-        self._squirrel.selections.remove(self)
+        self._database.selections.remove(self)
 
-    def undig(self):
+    def add(self, filenames):
+        self._conn.executemany(
+            'INSERT INTO %(db)s.%(file_states)s VALUES (?, 0)' % self._names,
+            ((s,) for s in filenames))
 
-        sql = '''
+    def undig_grouped(self, skip_unchanged=False):
+
+        if skip_unchanged:
+            where = '''
+                WHERE %(db)s.%(file_states)s.file_state == 0
+            '''
+        else:
+            where = ''
+
+        sql = ('''
             SELECT
-                temp.%s.file_name,
+                %(db)s.%(file_states)s.file_name,
                 files.file_name,
                 files.file_format,
                 files.file_mtime,
@@ -67,12 +84,16 @@ class Selection(object):
                 nuts.tmax_seconds,
                 nuts.tmax_offset,
                 nuts.deltat
-            FROM temp.%s
-            LEFT OUTER JOIN files ON temp.%s.file_name = files.file_name
-            LEFT OUTER JOIN nuts ON files.rowid = nuts.file_id
-            LEFT OUTER JOIN kind_codes ON nuts.kind_codes_id == kind_codes.rowid 
-            ORDER BY temp.%s.rowid
-        ''' % (self.name, self.name, self.name, self.name)
+            FROM %(db)s.%(file_states)s
+            LEFT OUTER JOIN files
+            ON %(db)s.%(file_states)s.file_name = files.file_name
+            LEFT OUTER JOIN nuts
+                ON files.rowid = nuts.file_id
+            LEFT OUTER JOIN kind_codes
+                ON nuts.kind_codes_id == kind_codes.rowid
+        ''' + where + '''
+            ORDER BY %(db)s.%(file_states)s.rowid
+        ''') % self._names
 
         nuts = []
         fn = None
@@ -91,41 +112,251 @@ class Selection(object):
 
     def iter_mtimes(self):
         sql = '''
-            SELECT files.file_name, files.file_mtime
-            FROM temp.%s
-            LEFT OUTER JOIN files ON temp.%s.file_name = files.file_name
-            ORDER BY temp.%s.rowid
-        ''' % (self.name, self.name, self.name)
+            SELECT files.file_name, files.file_format, files.file_mtime
+            FROM %(db)s.%(file_states)s
+            LEFT OUTER JOIN files
+            ON %(db)s.%(file_states)s.file_name = files.file_name
+            ORDER BY %(db)s.%(file_states)s.rowid
+        ''' % self._names
 
         for row in self._conn.execute(sql):
             yield row
 
     def get_mtimes(self):
-        return list(mtime for (_, mtime) in self.iter_mtimes())
+        return list(mtime for (_, _, mtime) in self.iter_mtimes())
 
-    def filter_modified_or_new(self, check_mtime=True):
+    def flag_unchanged(self, check_mtime=True):
 
-        def iter_filtered():
-            for filename, mtime_db in self.iter_mtimes():
+        def iter_filenames_states():
+            for filename, fmt, mtime_db in self.iter_mtimes():
                 if mtime_db is None or not os.path.exists(filename):
-                    yield filename
+                    yield 0, filename
+                    continue
 
                 if check_mtime:
                     try:
-                        mtime_file = os.stat(filename)[8]
-                    except OSError:
-                        yield filename
+                        mod = io.get_format_provider(fmt)
+                        mtime_file = mod.mtime(filename)
+                    except FileLoadError:
+                        yield 0, filename
+                        continue
+                    except io.UnknownFormat:
+                        yield 1, filename
                         continue
 
                     if mtime_db != mtime_file:
-                        yield filename
+                        yield 0, filename
+                        continue
 
-        filtered_selection = Selection(self._squirrel)
-        filtered_selection.add(iter_filtered())
-        return filtered_selection
+                yield 1, filename
+
+        sql = '''
+            UPDATE %(db)s.%(file_states)s
+            SET file_state = ?
+            WHERE file_name = ?
+        ''' % self._names
+
+        self._conn.executemany(sql, iter_filenames_states())
+
+
+class Squirrel(Selection):
+
+    def __init__(self, database):
+        Selection.__init__(self, database)
+        c = self._conn
+
+        self._names.update({
+            'nuts': self.name + '_nuts'})
+
+        c.execute(
+            '''CREATE TEMP TABLE %(db)s.%(nuts)s (
+                file_id integer,
+                file_segment integer,
+                file_element integer,
+                kind_codes_id integer,
+                tmin_seconds integer,
+                tmin_offset float,
+                tmax_seconds integer,
+                tmax_offset float,
+                deltat float,
+                kscale integer,
+                PRIMARY KEY (file_id, file_segment, file_element))
+            ''' % self._names)
+
+        c.execute(
+            '''CREATE INDEX IF NOT EXISTS %(db)s.%(nuts)s_index_tmin_seconds
+                ON %(nuts)s (tmin_seconds)
+            ''' % self._names)
+
+        c.execute(
+            '''CREATE INDEX IF NOT EXISTS %(db)s.%(nuts)s_index_tmax_seconds
+                ON %(nuts)s (tmax_seconds)''' % self._names)
+
+        c.execute(
+            '''CREATE INDEX IF NOT EXISTS %(db)s.%(nuts)s_index_kscale
+                ON %(nuts)s (kscale, tmin_seconds)''' % self._names)
+
+    def delete(self):
+        self._conn.execute(
+            'DROP TABLE %(db)s.%(nuts)s' % self._names)
+
+        Selection.delete(self)
+
+    def add(self, filenames, format='detect', check_mtime=True):
+
+        Selection.add(self, filenames)
+        if False:
+            self._load(format, check_mtime)
+        self._update_nuts()
+
+    def _load(self, format, check_mtime):
+        for _ in io.iload(
+                self,
+                content=[],
+                skip_unchanged=True,
+                format=format,
+                check_mtime=check_mtime):
+            pass
+
+    def _update_nuts(self):
+        c = self._conn
+        c.execute(
+            '''INSERT INTO %(db)s.%(nuts)s
+                SELECT nuts.* FROM %(db)s.%(file_states)s
+                INNER JOIN files
+                ON %(db)s.%(file_states)s.file_name = files.file_name
+                INNER JOIN nuts
+                ON files.rowid = nuts.file_id
+                WHERE %(db)s.%(file_states)s.file_state != 2
+            ''' % self._names)
+
+        c.execute(
+            '''
+            UPDATE %(db)s.%(file_states)s
+            SET file_state = 2
+            ''' % self._names)
+
+    def add_fdsn_site(self, site):
+        self._sources.append(fdsn.FDSNSource(site))
+
+    def undig_span(self, tmin, tmax):
+        tmin_seconds, tmin_offset = model.tsplit(tmin)
+        tmax_seconds, tmax_offset = model.tsplit(tmax)
+
+        tscale_edges = model.tscale_edges
+
+        tmin_cond = []
+        args = []
+        for kscale in range(len(tscale_edges) + 1):
+            if kscale != len(tscale_edges):
+                tscale = tscale_edges[kscale]
+                tmin_cond.append('''
+                    (%(db)s.%(nuts)s.kscale == ?
+                        AND %(db)s.%(nuts)s.tmin_seconds BETWEEN ? AND ?)
+                ''')
+                args.extend(
+                    (kscale, tmax_seconds - tscale - 1, tmax_seconds + 1))
+
+            else:
+                tmin_cond.append('''
+                    (%(db)s.%(nuts)s.kscale == ?
+                        AND %(db)s.%(nuts)s.tmin_seconds <= ?)
+                ''')
+
+                args.extend(
+                    (kscale, tmax_seconds + 1))
+
+        sql = ('''
+            SELECT
+                files.file_name,
+                files.file_format,
+                files.file_mtime,
+                %(db)s.%(nuts)s.file_segment,
+                %(db)s.%(nuts)s.file_element,
+                kind_codes.kind,
+                kind_codes.codes,
+                %(db)s.%(nuts)s.tmin_seconds,
+                %(db)s.%(nuts)s.tmin_offset,
+                %(db)s.%(nuts)s.tmax_seconds,
+                %(db)s.%(nuts)s.tmax_offset,
+                %(db)s.%(nuts)s.deltat
+            FROM files
+            INNER JOIN %(db)s.%(nuts)s
+            ON files.rowid == %(db)s.%(nuts)s.file_id
+            INNER JOIN kind_codes
+            ON %(db)s.%(nuts)s.kind_codes_id == kind_codes.rowid
+            WHERE ( ''' + ' OR '.join(tmin_cond) + ''')
+                AND %(db)s.%(nuts)s.tmax_seconds >= ?
+        ''') % self._names
+        args.append(tmin_seconds)
+
+        nuts = []
+        for row in self._conn.execute(sql, args):
+            nuts.append(model.Nut(values_nocheck=row))
+
+        return nuts
+
+    def undig_span_naiv(self, tmin, tmax):
+        tmin_seconds, tmin_offset = model.tsplit(tmin)
+        tmax_seconds, tmax_offset = model.tsplit(tmax)
+
+        sql = '''
+            SELECT
+                files.file_name,
+                files.file_format,
+                files.file_mtime,
+                %(db)s.%(nuts)s.file_segment,
+                %(db)s.%(nuts)s.file_element,
+                kind_codes.kind,
+                kind_codes.codes,
+                %(db)s.%(nuts)s.tmin_seconds,
+                %(db)s.%(nuts)s.tmin_offset,
+                %(db)s.%(nuts)s.tmax_seconds,
+                %(db)s.%(nuts)s.tmax_offset,
+                %(db)s.%(nuts)s.deltat
+            FROM files
+            INNER JOIN %(db)s.%(nuts)s
+            ON files.rowid == %(db)s.%(nuts)s.file_id
+            INNER JOIN kind_codes
+            ON %(db)s.%(nuts)s.kind_codes_id == kind_codes.rowid
+            WHERE %(db)s.%(nuts)s.tmax_seconds >= ?
+                AND %(db)s.%(nuts)s.tmin_seconds <= ?
+        ''' % self._names
+
+        nuts = []
+        for row in self._conn.execute(sql, (tmin_seconds, tmax_seconds+1)):
+            nuts.append(model.Nut(values_nocheck=row))
+
+        return nuts
+
+    def tspan(self):
+        sql = '''SELECT MIN(tmin_seconds) FROM %(db)s.%(nuts)s''' % self._names
+        tmin = None
+        for row in self._conn.execute(sql):
+            tmin = row[0]
+
+        tmax = None
+        sql = '''SELECT MAX(tmax_seconds) FROM %(db)s.%(nuts)s''' % self._names
+        for row in self._conn.execute(sql):
+            tmax = row[0]
+
+        return tmin, tmax
+
+    def iter_codes(self, kind=None):
+        sql = '''
+            SELECT kind, codes from kind_codes
+        '''
+        for row in self._conn.execute(sql):
+            yield row[0], row[1].split('\0')
+
+    def update_channel_inventory(self, selection):
+        for source in self._sources:
+            source.update_channel_inventory(selection)
+            for fn in source.get_channel_filenames(selection):
+                self.add(fn)
 
     def __len__(self):
-        sql = '''SELECT COUNT(*) FROM temp.%s''' % self.name
+        sql = '''SELECT COUNT(*) FROM %(db)s.%(file_states)s''' % self._names
         for row in self._conn.execute(sql):
             return row[0]
 
@@ -134,35 +365,47 @@ class Selection(object):
 squirrel selection "%s"
     files: %i''' % (self.name, len(self))
 
+    def waveform(self, selection=None, **kwargs):
+        pass
 
-class Squirrel(object):
+    def waveforms(self, selection=None, **kwargs):
+        pass
+
+    def station(self, selection=None, **kwargs):
+        pass
+
+    def stations(self, selection=None, **kwargs):
+        self.update_channel_inventory(selection)
+
+    def channel(self, selection=None, **kwargs):
+        pass
+
+    def channels(self, selection=None, **kwargs):
+        pass
+
+    def response(self, selection=None, **kwargs):
+        pass
+
+    def responses(self, selection=None, **kwargs):
+        pass
+
+    def event(self, selection=None, **kwargs):
+        pass
+
+    def events(self, selection=None, **kwargs):
+        pass
+
+
+class Database(object):
     def __init__(self, database=':memory:'):
         self._conn = sqlite3.connect(database)
         self._conn.text_factory = str
         self._initialize_db()
         self._need_commit = False
-        self._sources = []
         self.selections = []
-        self.global_selection = self.new_selection()
-
-    def __del__(self):
-        self.global_selection.delete()
 
     def get_connection(self):
         return self._conn
-
-    def add(self, filenames):
-        def iload():
-            file_name = None
-            for nut in io.iload(filenames, squirrel=self):
-                if nut.file_name != file_name:
-                    file_name = nut.file_name
-                    yield file_name
-
-        self.global_selection.add(iload())
-
-    def add_fdsn_site(self, site):
-        self._sources.append(fdsn.FDSNSource(site))
 
     def _initialize_db(self):
         c = self._conn.cursor()
@@ -198,22 +441,19 @@ class Squirrel(object):
                 ON nuts (file_id)''')
 
         c.execute(
-            '''CREATE INDEX IF NOT EXISTS index_nuts_tmin_seconds
-                ON nuts (tmin_seconds)''')
-
-        c.execute(
-            '''CREATE INDEX IF NOT EXISTS index_nuts_tmax_seconds
-                ON nuts (tmax_seconds)''')
-
-        c.execute(
-            '''CREATE INDEX IF NOT EXISTS index_nuts_kscale_tmin_seconds
-                ON nuts (kscale, tmin_seconds)''')
-
-        c.execute(
             '''CREATE TRIGGER IF NOT EXISTS delete_nuts
                 BEFORE DELETE ON files FOR EACH ROW
                 BEGIN
-                  DELETE FROM nuts where file_id = old.rowid;
+                  DELETE FROM nuts where file_id == old.rowid;
+                END''')
+
+        c.execute(
+            '''CREATE TRIGGER IF NOT EXISTS decrement_kind_codes
+                BEFORE DELETE ON nuts FOR EACH ROW
+                BEGIN
+                    UPDATE kind_codes
+                    SET count = count - 1
+                    WHERE old.kind_codes_id == rowid;
                 END''')
 
         self._conn.commit()
@@ -327,7 +567,7 @@ class Squirrel(object):
     def undig_many(self, filenames):
         selection = self.new_selection(filenames)
 
-        for fn, nuts in selection.undig():
+        for fn, nuts in selection.undig_grouped():
             yield fn, nuts
 
         selection.delete()
@@ -355,43 +595,6 @@ class Squirrel(object):
             selection.add(filenames)
         return selection
 
-    def choose(self, filenames):
-        self._conn.execute(
-            'CREATE TEMP TABLE choosen_files (file_name text)')
-
-        self._conn.executemany(
-            'INSERT INTO temp.choosen_files VALUES (?)',
-            ((s,) for s in filenames))
-
-        self._conn.execute(
-            '''CREATE TEMP TABLE choosen_nuts (
-                file_id integer,
-                file_segment integer,
-                file_element integer,
-                kind text,
-                codes text,
-                tmin_seconds integer,
-                tmin_offset float,
-                tmax_seconds integer,
-                tmax_offset float,
-                deltat float,
-                kscale integer,
-                PRIMARY KEY (file_id, file_segment, file_element))''')
-
-        sql = '''INSERT INTO temp.choosen_nuts
-            SELECT nuts.* FROM temp.choosen_files
-            INNER JOIN files ON temp.choosen_files.file_name = files.file_name
-            INNER JOIN nuts ON files.rowid = nuts.file_id
-        '''
-
-        self._conn.execute(sql)
-
-        self._conn.execute(
-            'DROP TABLE temp.choosen_files')
-
-        self._conn.execute(
-            'DROP TABLE temp.choosen_nuts')
-
     def commit(self):
         if self._need_commit:
             self._conn.commit()
@@ -399,146 +602,6 @@ class Squirrel(object):
 
     def undig_content(self, nut):
         return None
-
-    def undig_span_naiv(self, tmin, tmax):
-        tmin_seconds, tmin_offset = model.tsplit(tmin)
-        tmax_seconds, tmax_offset = model.tsplit(tmax)
-
-        sql = '''
-            SELECT
-                files.file_name,
-                files.file_format,
-                files.file_mtime,
-                nuts.file_segment,
-                nuts.file_element,
-                kind_codes.kind,
-                kind_codes.codes,
-                nuts.tmin_seconds,
-                nuts.tmin_offset,
-                nuts.tmax_seconds,
-                nuts.tmax_offset,
-                nuts.deltat
-            FROM files
-            INNER JOIN nuts ON files.rowid == nuts.file_id
-            INNER JOIN kind_codes ON nuts.kind_codes_id == kind_codes.rowid
-            WHERE nuts.tmax_seconds >= ? AND nuts.tmin_seconds <= ?
-        '''
-
-        nuts = []
-        for row in self._conn.execute(sql, (tmin_seconds, tmax_seconds+1)):
-            nuts.append(model.Nut(values_nocheck=row))
-
-        return nuts
-
-    def undig_span(self, tmin, tmax):
-        tmin_seconds, tmin_offset = model.tsplit(tmin)
-        tmax_seconds, tmax_offset = model.tsplit(tmax)
-
-        tscale_edges = model.tscale_edges
-
-        tmin_cond = []
-        args = []
-        for kscale in range(len(tscale_edges) + 1):
-            if kscale != len(tscale_edges):
-                tscale = tscale_edges[kscale]
-                tmin_cond.append('''
-                    (nuts.kscale == ? AND nuts.tmin_seconds BETWEEN ? AND ?)
-                ''')
-                args.extend(
-                    (kscale, tmax_seconds - tscale - 1, tmax_seconds + 1))
-
-            else:
-                tmin_cond.append('''
-                    (nuts.kscale == ? AND nuts.tmin_seconds <= ?)
-                ''')
-
-                args.extend(
-                    (kscale, tmax_seconds + 1))
-
-        sql = '''
-            SELECT
-                files.file_name,
-                files.file_format,
-                files.file_mtime,
-                nuts.file_segment,
-                nuts.file_element,
-                kind_codes.kind,
-                kind_codes.codes,
-                nuts.tmin_seconds,
-                nuts.tmin_offset,
-                nuts.tmax_seconds,
-                nuts.tmax_offset,
-                nuts.deltat
-            FROM files
-            INNER JOIN nuts ON files.rowid == nuts.file_id
-            INNER JOIN kind_codes ON nuts.kind_codes_id == kind_codes.rowid
-            WHERE ( ''' + ' OR '.join(tmin_cond) + ''')
-                AND nuts.tmax_seconds >= ?
-        '''
-        print(sql)
-        args.append(tmin_seconds)
-
-        nuts = []
-        for row in self._conn.execute(sql, args):
-            nuts.append(model.Nut(values_nocheck=row))
-
-        return nuts
-
-    def tspan(self):
-        sql = '''SELECT MIN(nuts.tmin_seconds) FROM nuts'''
-        tmin = None
-        for row in self._conn.execute(sql):
-            tmin = row[0]
-
-        tmax = None
-        sql = '''SELECT MAX(nuts.tmax_seconds) FROM nuts'''
-        for row in self._conn.execute(sql):
-            tmax = row[0]
-
-        return tmin, tmax
-
-    def iter_codes(self, kind=None):
-        sql = '''
-            SELECT kind, codes from kind_codes
-        '''
-        for row in self._conn.execute(sql):
-            yield row[0], row[1].split('\0')
-
-    def update_channel_inventory(self, selection):
-        for source in self._sources:
-            source.update_channel_inventory(selection)
-            for fn in source.get_channel_filenames(selection):
-                self.add(fn)
-
-    def waveform(self, selection=None, **kwargs):
-        pass
-
-    def waveforms(self, selection=None, **kwargs):
-        pass
-
-    def station(self, selection=None, **kwargs):
-        pass
-
-    def stations(self, selection=None, **kwargs):
-        self.update_channel_inventory(selection)
-
-    def channel(self, selection=None, **kwargs):
-        pass
-
-    def channels(self, selection=None, **kwargs):
-        pass
-
-    def response(self, selection=None, **kwargs):
-        pass
-
-    def responses(self, selection=None, **kwargs):
-        pass
-
-    def event(self, selection=None, **kwargs):
-        pass
-
-    def events(self, selection=None, **kwargs):
-        pass
 
 
 if False:

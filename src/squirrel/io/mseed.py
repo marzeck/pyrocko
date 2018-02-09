@@ -1,3 +1,4 @@
+from pyrocko.io.io_common import get_mtime  # noqa
 from pyrocko.squirrel import model
 
 
@@ -31,9 +32,9 @@ def iload(format, filename, segment, content):
             station=tr.station,
             location=tr.location,
             channel=tr.channel,
-            tmin = tr.tmin,
-            tmax = tr.tmax,
-            deltat = tr.deltat)
+            tmin=tr.tmin,
+            tmax=tr.tmax,
+            deltat=tr.deltat)
 
         if 'waveform' in content:
             nut.content = model.Waveform(
