@@ -123,7 +123,7 @@ def iload(
     temp_selection = None
     if database:
         if not selection:
-            temp_selection = database.new_selection(filenames)
+            temp_selection = database.new_selection(filenames, state=1)
             selection = temp_selection
 
         if skip_unchanged:

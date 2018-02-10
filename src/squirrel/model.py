@@ -64,7 +64,7 @@ def tscale_to_kscale(tscale):
     # ...
     # tscale_edges[len(tscale_edges)-1] <= x: len(tscale_edges)
 
-    return num.searchsorted(tscale_edges, tscale)
+    return int(num.searchsorted(tscale_edges, tscale))
 
 
 class Content(Object):

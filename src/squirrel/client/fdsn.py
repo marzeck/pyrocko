@@ -86,10 +86,9 @@ class FDSNSource(Source):
         if self._selection and self._selection.contains(selection) \
                 and not self._stale_channel_inventory(selection):
 
-            if self._channel_sx is None:
-                logger.info(
-                    'using cached channel information for site %s'
-                    % self._site)
+            logger.info(
+                'using cached channel information for site %s'
+                % self._site)
 
             return
 

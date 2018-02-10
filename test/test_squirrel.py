@@ -1,15 +1,15 @@
 from __future__ import print_function, absolute_import
 
 import os
-import time
 import unittest
 import tempfile
 import shutil
+import os.path as op
 
 import numpy as num
 
 from . import common
-from pyrocko import squirrel, util, pile, io
+from pyrocko import squirrel, util, pile, io, trace
 
 
 class SquirrelTestCase(unittest.TestCase):
@@ -117,6 +117,7 @@ class SquirrelTestCase(unittest.TestCase):
             nuts2 = database.undig(file_name)
             for nut in nuts2:
                 data.append((nut.file_name, nut.file_element))
+
         self.assertEqual(
             [(file_name, i) for file_name in 'abcde' for i in range(2)],
             data)
@@ -130,9 +131,46 @@ class SquirrelTestCase(unittest.TestCase):
             [(file_name, i) for file_name in 'ac' for i in range(2)],
             data)
 
+        data = []
+        for fn, nuts3 in database.undig_all():
+            for nut in nuts3:
+                data.append((nut.file_name, nut.file_element))
+
+        self.assertEqual(
+            [(file_name, i) for file_name in 'abcde' for i in range(2)],
+            data)
+
+    def test_add_update(self):
+
+        tempdir = tempfile.mkdtemp('test_add_update')
+
+        def make_files(vers):
+            tr = trace.Trace(ydata=num.array([vers], dtype=num.int32))
+            return io.save(tr, op.join(tempdir, 'traces.mseed'))
+
+        database = squirrel.Database()
+        sq = squirrel.Squirrel(database)
+        assert sq.get_nfiles() == 0
+        assert sq.get_nnuts() == 0
+
+        fns = make_files(0)
+        sq.add(fns)
+        assert sq.get_nfiles() == 1
+        assert sq.get_nnuts() == 1
+        sq.add(fns)
+        assert sq.get_nfiles() == 1
+        assert sq.get_nnuts() == 1
+
+        
+
+        print(sq)
+        shutil.rmtree(tempdir)
 
     def benchmark_chop(self):
-        nt = 100000
+        bench = self.test_chop(10000, ne=10)
+        print(bench)
+
+    def test_chop(self, nt=100, ne=10):
 
         tmin_g = util.stt('2000-01-01 00:00:00')
         tmax_g = util.stt('2020-01-01 00:00:00')
@@ -146,8 +184,7 @@ class SquirrelTestCase(unittest.TestCase):
             tmax = txs[it+1]
             tmin_seconds, tmin_offset = squirrel.model.tsplit(tmin)
             tmax_seconds, tmax_offset = squirrel.model.tsplit(tmax)
-            nuts_file = []
-            for file_element in range(10):
+            for file_element in range(ne):
                 all_nuts.append(squirrel.Nut(
                     file_name=file_name,
                     file_format='virtual',
@@ -163,182 +200,162 @@ class SquirrelTestCase(unittest.TestCase):
         squirrel.io.virtual.add_nuts(all_nuts)
 
         dbfilename = '/tmp/squirrel_benchmark_chop.db'
+        if os.path.exists(dbfilename):
+            os.unlink(dbfilename)
 
         filldb = not os.path.exists(dbfilename)
 
         database = squirrel.Database(dbfilename)
-        ts = []
+
+        bench = common.Benchmark('test_chop (%i x %i)' % (nt, ne))
+
         if filldb:
-            ts.append(time.time())
-            database.dig(all_nuts)
-            database.commit()
-            ts.append(time.time())
-            print('init db: %g' % (ts[-1] - ts[-2]))
+            with bench.run('init db'):
+                database.dig(all_nuts)
+                database.commit()
 
-        ts.append(time.time())
-        it = 0
-        for fn, nuts in database.undig_all():
-            it += 1
+        with bench.run('undig all'):
+            it = 0
+            for fn, nuts in database.undig_all():
+                it += 1
 
-        assert it == nt
+            assert it == nt
 
-        ts.append(time.time())
-        print('undig all: %g' % (ts[-1] - ts[-2]))
+        with bench.run('add to squirrel'):
+            sq = squirrel.Squirrel(database=database)
+            sq.add(
+                ('virtual:file_%i' % it for it in range(nt)),
+                check_mtime=False)
 
-        sq = squirrel.Squirrel(database=database)
-        sq.add(('virtual:file_%i' % it for it in range(nt)), check_mtime=False)
+        with bench.run('get tspan'):
+            tmin, tmax = sq.tspan()
 
-        ts.append(time.time())
-        print('add to squirrel: %g' % (ts[-1] - ts[-2]))
+        with bench.run('get codes'):
+            for kind, codes in sq.iter_codes():
+                pass
 
-        tmin, tmax = sq.tspan()
-        print('   ', tmin, tmax)
+        with bench.run('undig span naiv'):
+            t = tmin_g
+            tinc = 3600*24
+            while t < tmax:
+                t += tinc
+                tmin = t
+                tmax = t + tinc
 
-        ts.append(time.time())
-        print('squirrel, tspan: %g' % (ts[-1] - ts[-2]))
+                sq.undig_span_naiv(tmin, tmax)
+                break
 
-        for kind, codes in sq.iter_codes():
-            print('   %s: %s' % (kind, codes))
+        with bench.run('undig span'):
+            t = tmin_g
+            tinc = 3600*24
+            while t < tmax:
+                t += tinc
+                tmin = t
+                tmax = t + tinc
 
-        ts.append(time.time())
-        print('squirrel, codes: %g' % (ts[-1] - ts[-2]))
+                sq.undig_span(tmin, tmax)
+                break
 
-        t = tmin_g
-        tinc = 3600*24
-        while t < tmax:
-            t += tinc
-            tmin = t
-            tmax = t + tinc
+        return bench
 
-            sq.undig_span_naiv(tmin, tmax)
-            break
+    def benchmark_loading(self):
+        bench = self.test_loading(hours=24)
+        print(bench)
 
-        ts.append(time.time())
-        print('squirrel, undig_span_naiv: %g' % (ts[-1] - ts[-2]))
-
-        t = tmin_g
-        tinc = 3600*24
-        while t < tmax:
-            t += tinc
-            tmin = t
-            tmax = t + tinc
-
-            sq.undig_span(tmin, tmax)
-            break
-
-        ts.append(time.time())
-        print('squirrel, undig_span: %g' % (ts[-1] - ts[-2]))
-
-    def benchmark_load(self):
-        dir = '/tmp/testdataset_d'
+    def test_loading(self, with_pile=False, hours=1):
+        dir = '/tmp/testdataset_d_%i' % hours
         if not os.path.exists(dir):
-            common.make_dataset(dir, tinc=36., tlen=1*common.D)
+            common.make_dataset(dir, tinc=36., tlen=hours*common.H)
 
         fns = sorted(util.select_files([dir], show_progress=False))
 
-        ts = []
-
-        if False:
+        bench = common.Benchmark('test_load')
+        if with_pile:
             cachedirname = tempfile.mkdtemp('testcache')
 
-            ts.append(time.time())
-            pile.make_pile(
-                fns, fileformat='detect', cachedirname=cachedirname,
-                show_progress=False)
+            with bench.run('pile, initial scan'):
+                pile.make_pile(
+                    fns, fileformat='detect', cachedirname=cachedirname,
+                    show_progress=False)
 
-            ts.append(time.time())
-            print('pile, initial scan: %g' % (ts[-1] - ts[-2]))
-
-            pile.make_pile(
-                fns, fileformat='detect', cachedirname=cachedirname,
-                show_progress=False)
-
-            ts.append(time.time())
-            print('pile, rescan: %g' % (ts[-1] - ts[-2]))
+            with bench.run('pile, rescan'):
+                pile.make_pile(
+                    fns, fileformat='detect', cachedirname=cachedirname,
+                    show_progress=False)
 
             shutil.rmtree(cachedirname)
 
-        if True:
-            ts.append(time.time())
+        with bench.run('plain load baseline'):
             ii = 0
             for fn in fns:
-                for tr in io.load(fn, getdata=True):
+                for tr in io.load(fn, getdata=False):
                     ii += 1
 
-            ts.append(time.time())
-            print('plain load baseline: %g' % (ts[-1] - ts[-2]))
-
-        if True:
-            ts.append(time.time())
-
+        with bench.run('iload, without db'):
             ii = 0
             for nut in squirrel.iload(fns, content=[]):
                 ii += 1
 
             assert ii == len(fns)
 
-            ts.append(time.time())
-            print('squirrel, no db: %g' % (ts[-1] - ts[-2]))
-
         dbfilename = '/tmp/squirrel.db'
         if os.path.exists(dbfilename):
             os.unlink(dbfilename)
         database = squirrel.Database(dbfilename)
 
-        ts.append(time.time())
-        ii = 0
-        for nut in squirrel.iload(fns, content=[], database=database):
-            ii += 1
+        with bench.run('iload, with db'):
+            ii = 0
+            for nut in squirrel.iload(fns, content=[], database=database):
+                ii += 1
 
-        assert ii == len(fns)
-        ts.append(time.time())
-        print('squirrel, initial scan: %g' % (ts[-1] - ts[-2]))
+            assert ii == len(fns)
 
-        ii = 0
-        for nut in squirrel.iload(fns, content=[], database=database):
-            ii += 1
+        with bench.run('iload, rescan'):
+            ii = 0
+            for nut in squirrel.iload(fns, content=[], database=database):
+                ii += 1
 
-        assert ii == len(fns)
-        ts.append(time.time())
-        print('squirrel, rescan: %g' % (ts[-1] - ts[-2]))
+            assert ii == len(fns)
 
-        ii = 0
-        for nut in squirrel.iload(fns, content=[], database=database,
-                                  check_mtime=False):
-            ii += 1
+        with bench.run('iload, rescan, no mtime check'):
+            ii = 0
+            for nut in squirrel.iload(fns, content=[], database=database,
+                                      check_mtime=False):
+                ii += 1
 
-        assert ii == len(fns)
-        ts.append(time.time())
-        print('squirrel, rescan, no mtime check: %g' % (ts[-1] - ts[-2]))
+            assert ii == len(fns)
 
-        ii = 0
-        for nut in squirrel.iload(fns, content=[], database=database,
-                                  skip_unchanged=True, check_mtime=False):
-            ii += 1
+        with bench.run('iload, rescan, skip unchanged'):
+            ii = 0
+            for nut in squirrel.iload(fns, content=[], database=database,
+                                      skip_unchanged=True, check_mtime=True):
+                ii += 1
 
-        assert ii == 0
-        ts.append(time.time())
-        print('squirrel, rescan, index only (skip up to date): %g' % (
-            ts[-1] - ts[-2]))
+            assert ii == 0
 
-        ii = 0
-        for fn, nuts in database.undig_many(fns):
-            ii += 1
+        with bench.run('iload, rescan, skip known'):
+            ii = 0
+            for nut in squirrel.iload(fns, content=[], database=database,
+                                      skip_unchanged=True, check_mtime=False):
+                ii += 1
 
-        assert ii == len(fns)
-        ts.append(time.time())
-        print('squirrel, pure undig: %g' % (ts[-1] - ts[-2]))
+            assert ii == 0
 
-        for fn in fns:
-            database.get_mtime(fn)
+        with bench.run('undig'):
+            ii = 0
+            for fn, nuts in database.undig_many(fns):
+                ii += 1
 
-        ts.append(time.time())
-        print('squirrel, query mtime (file-by-file): %g' % (ts[-1] - ts[-2]))
+            assert ii == len(fns)
 
-        database.get_mtimes(fns)
+        with bench.run('mtime, file-by-file'):
+            for fn in fns:
+                database.get_mtime(fn)
 
-        ts.append(time.time())
-        print('squirrel, query mtime (batch): %g' % (ts[-1] - ts[-2]))
+        with bench.run('mtime, batch'):
+            database.get_mtimes(fns)
+
+        return bench
 
     def test_source(self):
 

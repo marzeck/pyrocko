@@ -6,6 +6,7 @@ from collections import defaultdict, Counter
 from pyrocko.io_common import FileLoadError
 from pyrocko.squirrel import model, io
 from pyrocko.squirrel.client import fdsn
+from pyrocko.guts import Object, Int, List, String
 
 
 def iitems(d):
@@ -55,10 +56,11 @@ class Selection(object):
 
         self._database.selections.remove(self)
 
-    def add(self, filenames):
+    def add(self, filenames, state=0):
         self._conn.executemany(
-            'INSERT INTO %(db)s.%(file_states)s VALUES (?, 0)' % self._names,
-            ((s,) for s in filenames))
+            'INSERT OR IGNORE INTO %(db)s.%(file_states)s VALUES (?, ?)'
+            % self._names,
+            ((s, state) for s in filenames))
 
     def undig_grouped(self, skip_unchanged=False):
 
@@ -112,7 +114,10 @@ class Selection(object):
 
     def iter_mtimes(self):
         sql = '''
-            SELECT files.file_name, files.file_format, files.file_mtime
+            SELECT
+                files.file_name,
+                files.file_format,
+                files.file_mtime
             FROM %(db)s.%(file_states)s
             LEFT OUTER JOIN files
             ON %(db)s.%(file_states)s.file_name = files.file_name
@@ -136,19 +141,16 @@ class Selection(object):
                 if check_mtime:
                     try:
                         mod = io.get_format_provider(fmt)
-                        mtime_file = mod.mtime(filename)
+                        mtime_file = mod.get_mtime(filename)
                     except FileLoadError:
                         yield 0, filename
                         continue
                     except io.UnknownFormat:
-                        yield 1, filename
                         continue
 
                     if mtime_db != mtime_file:
                         yield 0, filename
                         continue
-
-                yield 1, filename
 
         sql = '''
             UPDATE %(db)s.%(file_states)s
@@ -157,6 +159,13 @@ class Selection(object):
         ''' % self._names
 
         self._conn.executemany(sql, iter_filenames_states())
+
+
+class SquirrelStats(Object):
+    nfiles = Int.T()
+    nnuts = Int.T()
+    codes = List.T(List.T(String.T()))
+    kinds = List.T(String.T())
 
 
 class Squirrel(Selection):
@@ -202,11 +211,30 @@ class Squirrel(Selection):
 
         Selection.delete(self)
 
+    def print_tables(self):
+        for table in [
+                '%(db)s.%(file_states)s',
+                '%(db)s.%(nuts)s']:
+
+            print()
+            print('-' * 64)
+            print(table % self._names)
+            print('-' * 64)
+            sql = ('SELECT * FROM %s' % table) % self._names
+            tab = []
+            for row in self._conn.execute(sql):
+                tab.append([str(x) for x in row])
+
+            widths = [max(len(x) for x in col) for col in zip(*tab)]
+            for row in tab:
+                print(
+                    ' '.join(x.ljust(wid) for (x, wid) in zip(row, widths)))
+            print()
+
     def add(self, filenames, format='detect', check_mtime=True):
 
         Selection.add(self, filenames)
-        if False:
-            self._load(format, check_mtime)
+        self._load(format, check_mtime)
         self._update_nuts()
 
     def _load(self, format, check_mtime):
@@ -343,11 +371,10 @@ class Squirrel(Selection):
         return tmin, tmax
 
     def iter_codes(self, kind=None):
-        sql = '''
-            SELECT kind, codes from kind_codes
-        '''
-        for row in self._conn.execute(sql):
-            yield row[0], row[1].split('\0')
+        return ['todo']
+
+    def iter_kinds(self, kind=None):
+        return ['todo']
 
     def update_channel_inventory(self, selection):
         for source in self._sources:
@@ -355,15 +382,25 @@ class Squirrel(Selection):
             for fn in source.get_channel_filenames(selection):
                 self.add(fn)
 
-    def __len__(self):
+    def get_nfiles(self):
         sql = '''SELECT COUNT(*) FROM %(db)s.%(file_states)s''' % self._names
         for row in self._conn.execute(sql):
             return row[0]
 
+    def get_nnuts(self):
+        sql = '''SELECT COUNT(*) FROM %(db)s.%(nuts)s''' % self._names
+        for row in self._conn.execute(sql):
+            return row[0]
+
+    def stats(self):
+        return SquirrelStats(
+            nfiles=self.get_nfiles(),
+            nnuts=self.get_nnuts(),
+            kinds=list(self.iter_kinds()),
+            codes=list(self.iter_codes()))
+
     def __str__(self):
-        return '''
-squirrel selection "%s"
-    files: %i''' % (self.name, len(self))
+        return str(self.stats())
 
     def waveform(self, selection=None, **kwargs):
         pass
@@ -589,10 +626,10 @@ class Database(object):
         selection.delete()
         return mtimes
 
-    def new_selection(self, filenames=None):
+    def new_selection(self, filenames=None, state=0):
         selection = Selection(self)
         if filenames:
-            selection.add(filenames)
+            selection.add(filenames, state=state)
         return selection
 
     def commit(self):

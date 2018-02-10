@@ -118,6 +118,18 @@ def have_obspy():
 require_obspy = unittest.skipUnless(have_obspy(), 'obspy not installed')
 
 
+class BenchmarkCM(object):
+    def __init__(self, label, results):
+        self._label = label
+        self._results = results
+
+    def __enter__(self):
+        self._t0 = time.time()
+
+    def __exit__(self, *args):
+        self._results.append((self._label, time.time() - self._t0))
+
+
 class Benchmark(object):
     def __init__(self, prefix=None):
         self.prefix = prefix or ''
@@ -146,6 +158,9 @@ class Benchmark(object):
             return stopwatch
         return wrapper
 
+    def run(self, label):
+        return BenchmarkCM(label, self.results)
+
     def __str__(self, header=True):
         if not self.results:
             return 'No benchmarks ran'
@@ -173,7 +188,7 @@ class Benchmark(object):
         if len(self.results) == 0:
             rstr.append('None ran!')
 
-        return '\n'.join(rstr)
+        return '\n\n' + '\n'.join(rstr) + '\n'
 
     def clear(self):
         self.results = []
