@@ -620,6 +620,21 @@ class Event(Object):
     region = Region.T(
         optional=True)
 
+    @classmethod
+    def from_pyrocko_event(self, ev):
+        origin = Origin(
+            public_id='quakeml:test/'+ev.name + '_origin',
+            time=TimeQuantity(value=ev.time),
+            longitude=RealQuantity(value=ev.lon),
+            latitude=RealQuantity(value=ev.lat),
+            depth=RealQuantity(value=ev.depth),
+            region=ev.region)
+
+        return Event(
+            public_id='quakeml:test/'+ev.name,
+            origin_list=[origin],
+            preferred_origin_id=origin.public_id)
+
     def pyrocko_event(self):
         '''
         Convert into Pyrocko event object.
@@ -716,3 +731,15 @@ class QuakeML(Object):
             events.append(e.pyrocko_event())
 
         return events
+
+    @classmethod
+    def from_pyrocko_events(cls, events):
+        qevents = []
+        for ev in events:
+            qevents.append(
+                Event.from_pyrocko_event(ev))
+
+        return QuakeML(event_parameters=EventParameters(
+            public_id='quakeml:test/test',
+            event_list=qevents)) 
+
