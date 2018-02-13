@@ -1,5 +1,6 @@
 from __future__ import print_function, absolute_import
 
+import time
 import os
 import unittest
 import tempfile
@@ -145,7 +146,11 @@ class SquirrelTestCase(unittest.TestCase):
         tempdir = tempfile.mkdtemp('test_add_update')
 
         def make_files(vers):
-            tr = trace.Trace(ydata=num.array([vers], dtype=num.int32))
+            tr = trace.Trace(
+                tmin=float(vers),
+                deltat=1.0,
+                ydata=num.array([vers], dtype=num.int32))
+
             return io.save(tr, op.join(tempdir, 'traces.mseed'))
 
         database = squirrel.Database()
@@ -160,11 +165,38 @@ class SquirrelTestCase(unittest.TestCase):
         sq.add(fns)
         assert sq.get_nfiles() == 1
         assert sq.get_nnuts() == 1
+        sq.print_tables()
+        print(sq.tspan())
+        for nut in sq.undig_span(-10., 10.):
+            print(nut)
 
-        
+        time.sleep(2)
 
-        print(sq)
+        fns = make_files(1)
+        sq.add(fns, check_mtime=False)
+        assert sq.get_nfiles() == 1
+        assert sq.get_nnuts() == 1
+
+        print(sq.get_kind_codes())
+
+        for nut in sq.undig_span(-10., 10.):
+            print(nut)
+
+        sq.add(fns, check_mtime=True)
+        assert sq.get_nfiles() == 1
+        assert sq.get_nnuts() == 1
+
+        for nut in sq.undig_span(-10., 10.):
+            print(nut)
+
         shutil.rmtree(tempdir)
+
+        sq.add(fns, check_mtime=True)
+        assert sq.get_nfiles() == 1
+        assert sq.get_nnuts() == 0
+
+        for nut in sq.undig_span(-10., 10.):
+            print(nut)
 
     def benchmark_chop(self):
         bench = self.test_chop(10000, ne=10)

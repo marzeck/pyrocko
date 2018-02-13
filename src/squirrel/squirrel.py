@@ -175,10 +175,11 @@ class Squirrel(Selection):
         c = self._conn
 
         self._names.update({
-            'nuts': self.name + '_nuts'})
+            'nuts': self.name + '_nuts',
+            'kind_codes': self.name + '_kind_codes'})
 
         c.execute(
-            '''CREATE TEMP TABLE %(db)s.%(nuts)s (
+            '''CREATE TABLE %(db)s.%(nuts)s (
                 file_id integer,
                 file_segment integer,
                 file_element integer,
@@ -193,21 +194,56 @@ class Squirrel(Selection):
             ''' % self._names)
 
         c.execute(
-            '''CREATE INDEX IF NOT EXISTS %(db)s.%(nuts)s_index_tmin_seconds
+            '''CREATE TABLE %(db)s.%(kind_codes)s (
+                kind_codes_id integer PRIMARY KEY,
+                count integer)''' % self._names)
+
+        c.execute(
+            '''CREATE INDEX %(db)s.%(nuts)s_index_tmin_seconds
                 ON %(nuts)s (tmin_seconds)
             ''' % self._names)
 
         c.execute(
-            '''CREATE INDEX IF NOT EXISTS %(db)s.%(nuts)s_index_tmax_seconds
+            '''CREATE INDEX %(db)s.%(nuts)s_index_tmax_seconds
                 ON %(nuts)s (tmax_seconds)''' % self._names)
 
         c.execute(
-            '''CREATE INDEX IF NOT EXISTS %(db)s.%(nuts)s_index_kscale
+            '''CREATE INDEX %(db)s.%(nuts)s_index_kscale
                 ON %(nuts)s (kscale, tmin_seconds)''' % self._names)
+
+        c.execute(
+            '''CREATE TRIGGER %(db)s.%(nuts)s_delete_nuts
+                BEFORE DELETE ON main.files FOR EACH ROW
+                BEGIN
+                  DELETE FROM %(nuts)s where file_id == old.rowid;
+                END''' % self._names)
+
+        c.execute(
+            '''CREATE TRIGGER %(db)s.%(nuts)s_decrement_kind_codes
+                BEFORE INSERT ON %(nuts)s FOR EACH ROW
+                BEGIN
+                    INSERT OR IGNORE INTO %(kind_codes)s VALUES
+                    (new.kind_codes_id, 0);
+                    UPDATE %(kind_codes)s
+                    SET count = count + 1
+                    WHERE new.kind_codes_id == %(kind_codes)s.kind_codes_id;
+                END''' % self._names)
+
+        c.execute(
+            '''CREATE TRIGGER %(db)s.%(nuts)s_decrement_kind_codes
+                BEFORE DELETE ON %(nuts)s FOR EACH ROW
+                BEGIN
+                    UPDATE %(kind_codes)s
+                    SET count = count - 1
+                    WHERE old.kind_codes_id == %kind_codes)s.kind_codes_id;
+                END''' % self._names)
 
     def delete(self):
         self._conn.execute(
             'DROP TABLE %(db)s.%(nuts)s' % self._names)
+
+        self._conn.execute(
+            'DROP TABLE %(db)s.%(kind_codes)s' % self._names)
 
         Selection.delete(self)
 
@@ -283,7 +319,7 @@ class Squirrel(Selection):
                         AND %(db)s.%(nuts)s.tmin_seconds BETWEEN ? AND ?)
                 ''')
                 args.extend(
-                    (kscale, tmax_seconds - tscale - 1, tmax_seconds + 1))
+                    (kscale, tmin_seconds - tscale - 1, tmax_seconds + 1))
 
             else:
                 tmin_cond.append('''
@@ -318,11 +354,10 @@ class Squirrel(Selection):
         ''') % self._names
         args.append(tmin_seconds)
 
-        nuts = []
         for row in self._conn.execute(sql, args):
-            nuts.append(model.Nut(values_nocheck=row))
-
-        return nuts
+            nut = model.Nut(values_nocheck=row)
+            if nut.tmin < tmax and tmin <= nut.tmax:
+                yield nut
 
     def undig_span_naiv(self, tmin, tmax):
         tmin_seconds, tmin_offset = model.tsplit(tmin)
@@ -351,11 +386,10 @@ class Squirrel(Selection):
                 AND %(db)s.%(nuts)s.tmin_seconds <= ?
         ''' % self._names
 
-        nuts = []
         for row in self._conn.execute(sql, (tmin_seconds, tmax_seconds+1)):
-            nuts.append(model.Nut(values_nocheck=row))
-
-        return nuts
+            nut = model.Nut(values_nocheck=row)
+            if nut.tmin < tmax and tmin <= nut.tmax:
+                yield nut
 
     def tspan(self):
         sql = '''SELECT MIN(tmin_seconds) FROM %(db)s.%(nuts)s''' % self._names
@@ -371,10 +405,35 @@ class Squirrel(Selection):
         return tmin, tmax
 
     def iter_codes(self, kind=None):
-        return ['todo']
+        if kind is not None:
+            sel = 'AND kind_codes.codes == ?'
+            args.append('
 
-    def iter_kinds(self, kind=None):
-        return ['todo']
+        sql = ('''
+            SELECT DISTINCT kind_codes.codes FROM %(db)s.%(kind_codes)s 
+            INNER JOIN kind_codes
+            WHERE %(db).%(kind_codes)s.kind_codes_id == kind_codes.rowid
+                ''' + sel + '''
+            ORDER BY kind_codes.codes
+        ''') % self._names
+
+        for row in self._conn.execute(sql):
+            yield row[0]
+
+    def iter_kinds(self, codes=None):
+        if codes is not None:
+            sel = 'AND kind_codes.codes == ?'
+
+        sql = ('''
+            SELECT kind_codes.codes FROM %(db)s.%(kind_codes)s 
+            INNER JOIN kind_codes
+            WHERE %(db).%(kind_codes)s.kind_codes_id == kind_codes.rowid
+                ''' + sel + '''
+            ORDER BY kind_codes.kind
+        ''') % self._names
+
+        for row in self._conn.execute(sql):
+            yield row[0]
 
     def update_channel_inventory(self, selection):
         for source in self._sources:
@@ -639,6 +698,10 @@ class Database(object):
 
     def undig_content(self, nut):
         return None
+
+    def remove(self, filename):
+        self._conn.execute(
+            'DELETE FROM files WHERE file_name = ?', (filename,))
 
 
 if False:

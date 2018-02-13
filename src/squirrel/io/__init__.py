@@ -140,60 +140,68 @@ def iload(
         it = ((fn, []) for fn in filenames)
 
     for filename, old_nuts in it:
-        if check_mtime and old_nuts and old_nuts[0].file_modified():
-            old_nuts = []
+        try:
+            if check_mtime and old_nuts and old_nuts[0].file_modified():
+                old_nuts = []
 
-        if segment is not None:
-            old_nuts = [nut for nut in old_nuts if nut.segment == segment]
-
-        if old_nuts:
-            db_only_operation = not content or all(
-                nut.kind in content and nut.content_in_db for nut in old_nuts)
-
-            if db_only_operation:
-                logger.debug('using cached information for file %s, '
-                             % filename)
-
-                for nut in old_nuts:
-                    if nut.kind in content:
-                        database.undig_content(nut)
-
-                    n_db += 1
-                    yield nut
-
-                continue
-
-        if format == 'detect':
-            if old_nuts and not old_nuts[0].file_modified():
-                format_this = old_nuts[0].file_format
-            else:
-                format_this = detect_format(filename)
-        else:
-            format_this = format
-
-        mod = get_format_provider(format_this)
-        mtime = mod.get_mtime(filename)
-
-        logger.debug('reading file %s' % filename)
-        nuts = []
-        for nut in mod.iload(format_this, filename, segment, content):
-            nut.file_name = filename
-            nut.file_format = format_this
-            nut.file_mtime = mtime
-
-            nuts.append(nut)
-            n_load += 1
-            yield nut
-
-        if database and nuts != old_nuts:
             if segment is not None:
-                nuts = mod.iload(format_this, filename, None, [])
-                for nut in nuts:
-                    nut.file_name = filename
-                    nut.file_format = format_this
-                    nut.file_mtime = mtime
+                old_nuts = [nut for nut in old_nuts if nut.segment == segment]
 
-            database.dig(nuts)
+            if old_nuts:
+                db_only_operation = not content or all(
+                    nut.kind in content and nut.content_in_db for nut in old_nuts)
+
+                if db_only_operation:
+                    logger.debug('using cached information for file %s, '
+                                 % filename)
+
+                    for nut in old_nuts:
+                        if nut.kind in content:
+                            database.undig_content(nut)
+
+                        n_db += 1
+                        yield nut
+
+                    continue
+
+            if format == 'detect':
+                if old_nuts and not old_nuts[0].file_modified():
+                    format_this = old_nuts[0].file_format
+                else:
+                    format_this = detect_format(filename)
+            else:
+                format_this = format
+
+            mod = get_format_provider(format_this)
+            mtime = mod.get_mtime(filename)
+
+            logger.debug('reading file %s' % filename)
+            nuts = []
+            for nut in mod.iload(format_this, filename, segment, content):
+                nut.file_name = filename
+                nut.file_format = format_this
+                nut.file_mtime = mtime
+
+                nuts.append(nut)
+                n_load += 1
+                yield nut
+
+            if database and nuts != old_nuts:
+                if segment is not None:
+                    nuts = mod.iload(format_this, filename, None, [])
+                    for nut in nuts:
+                        nut.file_name = filename
+                        nut.file_format = format_this
+                        nut.file_mtime = mtime
+
+                database.dig(nuts)
+
+        except FileLoadError:
+            logger.error('an error occured while reading file: %s' % filename)
+            if database:
+                database.remove(filename)
+
+            continue
 
     if database:
         if commit:
