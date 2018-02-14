@@ -177,7 +177,10 @@ class SquirrelTestCase(unittest.TestCase):
         assert sq.get_nfiles() == 1
         assert sq.get_nnuts() == 1
 
-        print(sq.get_kind_codes())
+        print(list(sq.iter_kinds()))
+
+        assert(list(sq.iter_codes()) == [('', 'STA', '', '')])
+        assert(list(sq.iter_kinds()) == ['waveform'])
 
         for nut in sq.undig_span(-10., 10.):
             print(nut)

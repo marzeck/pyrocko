@@ -219,7 +219,7 @@ class Squirrel(Selection):
                 END''' % self._names)
 
         c.execute(
-            '''CREATE TRIGGER %(db)s.%(nuts)s_decrement_kind_codes
+            '''CREATE TRIGGER %(db)s.%(nuts)s_increment_kind_codes
                 BEFORE INSERT ON %(nuts)s FOR EACH ROW
                 BEGIN
                     INSERT OR IGNORE INTO %(kind_codes)s VALUES
@@ -235,7 +235,7 @@ class Squirrel(Selection):
                 BEGIN
                     UPDATE %(kind_codes)s
                     SET count = count - 1
-                    WHERE old.kind_codes_id == %kind_codes)s.kind_codes_id;
+                    WHERE old.kind_codes_id == %(kind_codes)s.kind_codes_id;
                 END''' % self._names)
 
     def delete(self):
@@ -405,29 +405,34 @@ class Squirrel(Selection):
         return tmin, tmax
 
     def iter_codes(self, kind=None):
+        args = []
+        sel = ''
         if kind is not None:
             sel = 'AND kind_codes.codes == ?'
-            args.append('
+            args.append(kind)
 
         sql = ('''
             SELECT DISTINCT kind_codes.codes FROM %(db)s.%(kind_codes)s 
             INNER JOIN kind_codes
-            WHERE %(db).%(kind_codes)s.kind_codes_id == kind_codes.rowid
+            WHERE %(db)s.%(kind_codes)s.kind_codes_id == kind_codes.rowid
                 ''' + sel + '''
             ORDER BY kind_codes.codes
         ''') % self._names
 
-        for row in self._conn.execute(sql):
-            yield row[0]
+        for row in self._conn.execute(sql, args):
+            yield row[0].split('\0')
 
     def iter_kinds(self, codes=None):
+        args = []
+        sel = ''
         if codes is not None:
             sel = 'AND kind_codes.codes == ?'
+            args.append('\0'.join(codes))
 
         sql = ('''
             SELECT kind_codes.codes FROM %(db)s.%(kind_codes)s 
             INNER JOIN kind_codes
-            WHERE %(db).%(kind_codes)s.kind_codes_id == kind_codes.rowid
+            WHERE %(db)s.%(kind_codes)s.kind_codes_id == kind_codes.rowid
                 ''' + sel + '''
             ORDER BY kind_codes.kind
         ''') % self._names
