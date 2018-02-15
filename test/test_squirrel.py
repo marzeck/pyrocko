@@ -11,6 +11,10 @@ import numpy as num
 
 from . import common
 from pyrocko import squirrel, util, pile, io, trace
+try:
+    from StringIO import StringIO
+except ImportError:
+    from io import StringIO
 
 
 class SquirrelTestCase(unittest.TestCase):
@@ -149,12 +153,14 @@ class SquirrelTestCase(unittest.TestCase):
             tr = trace.Trace(
                 tmin=float(vers),
                 deltat=1.0,
-                ydata=num.array([vers], dtype=num.int32))
+                ydata=num.array([vers, vers], dtype=num.int32))
 
             return io.save(tr, op.join(tempdir, 'traces.mseed'))
 
         database = squirrel.Database()
         sq = squirrel.Squirrel(database)
+
+
         assert sq.get_nfiles() == 0
         assert sq.get_nnuts() == 0
 
@@ -165,10 +171,11 @@ class SquirrelTestCase(unittest.TestCase):
         sq.add(fns)
         assert sq.get_nfiles() == 1
         assert sq.get_nnuts() == 1
-        sq.print_tables()
-        print(sq.tspan())
-        for nut in sq.undig_span(-10., 10.):
-            print(nut)
+
+        assert sq.tspan() == (0., 1.)
+        
+        f = StringIO()
+        sq.print_tables(stream=f)
 
         time.sleep(2)
 
@@ -177,20 +184,25 @@ class SquirrelTestCase(unittest.TestCase):
         assert sq.get_nfiles() == 1
         assert sq.get_nnuts() == 1
 
-        print(list(sq.iter_kinds()))
+        assert list(sq.iter_codes()) == [('', '', 'STA', '', '', '')]
+        assert list(sq.iter_kinds()) == ['waveform']
 
-        assert(list(sq.iter_codes()) == [('', 'STA', '', '')])
-        assert(list(sq.iter_kinds()) == ['waveform'])
-
-        for nut in sq.undig_span(-10., 10.):
-            print(nut)
+        assert len(list(sq.undig_span(-10., 10.))) == 1
+        assert len(list(sq.undig_span(-1., 0.))) == 0
+        assert len(list(sq.undig_span(0., 1.))) == 1
+        assert len(list(sq.undig_span(1., 2.))) == 0
+        assert len(list(sq.undig_span(-1., 0.5))) == 1
+        assert len(list(sq.undig_span(0.5, 1.5))) == 1
+        assert len(list(sq.undig_span(0.2, 0.7))) == 1
 
         sq.add(fns, check_mtime=True)
         assert sq.get_nfiles() == 1
         assert sq.get_nnuts() == 1
 
-        for nut in sq.undig_span(-10., 10.):
-            print(nut)
+        assert list(sq.iter_codes()) == [('', '', 'STA', '', '', '')]
+        assert list(sq.iter_kinds()) == ['waveform']
+
+        assert len(list(sq.undig_span(-10., 10.))) == 1
 
         shutil.rmtree(tempdir)
 
@@ -198,11 +210,13 @@ class SquirrelTestCase(unittest.TestCase):
         assert sq.get_nfiles() == 1
         assert sq.get_nnuts() == 0
 
-        for nut in sq.undig_span(-10., 10.):
-            print(nut)
+        assert list(sq.iter_codes()) == []
+        assert list(sq.iter_kinds()) == []
+
+        assert len(list(sq.undig_span(-10., 10.))) == 0
 
     def benchmark_chop(self):
-        bench = self.test_chop(10000, ne=10)
+        bench = self.test_chop(100000, ne=10)
         print(bench)
 
     def test_chop(self, nt=100, ne=10):
@@ -211,6 +225,8 @@ class SquirrelTestCase(unittest.TestCase):
         tmax_g = util.stt('2020-01-01 00:00:00')
 
         txs = num.sort(num.random.uniform(tmin_g, tmax_g, nt+1))
+        txs[0] = tmin_g
+        txs[-1] = tmax_g
 
         all_nuts = []
         for it in range(nt):
@@ -266,30 +282,27 @@ class SquirrelTestCase(unittest.TestCase):
             tmin, tmax = sq.tspan()
 
         with bench.run('get codes'):
-            for kind, codes in sq.iter_codes():
+            for codes in sq.iter_codes():
                 pass
 
-        with bench.run('undig span naiv'):
-            t = tmin_g
-            tinc = 3600*24
-            while t < tmax:
-                t += tinc
-                tmin = t
-                tmax = t + tinc
+        expect = []
+        nwin = 100
+        tinc = 24 * 3600.
 
-                sq.undig_span_naiv(tmin, tmax)
-                break
+        with bench.run('undig span naiv'):
+            for iwin in range(nwin):
+                tmin = tmin_g + iwin * tinc
+                tmax = tmin_g + (iwin+1) * tinc
+
+                expect.append(len(list(sq.undig_span_naiv(tmin, tmax))))
+                assert expect[-1] >= 10
 
         with bench.run('undig span'):
-            t = tmin_g
-            tinc = 3600*24
-            while t < tmax:
-                t += tinc
-                tmin = t
-                tmax = t + tinc
+            for iwin in range(nwin):
+                tmin = tmin_g + iwin * tinc
+                tmax = tmin_g + (iwin+1) * tinc
 
-                sq.undig_span(tmin, tmax)
-                break
+                assert len(list(sq.undig_span(tmin, tmax))) == expect[iwin]
 
         return bench
 
@@ -393,14 +406,13 @@ class SquirrelTestCase(unittest.TestCase):
         return bench
 
     def test_source(self):
-
         tmin = util.str_to_time('2018-01-01 00:00:00')
         tmax = util.str_to_time('2018-01-02 00:00:00')
         database = squirrel.Database()
         sq = squirrel.Squirrel(database=database)
         sq.add_fdsn_site('geofon')
-        for s in sq.stations():
-            print(s)
+        sel = squirrel.client.Selection(tmin=tmin, tmax=tmax)
+        sq.update_channel_inventory(sel)
 
 
 if __name__ == "__main__":

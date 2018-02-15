@@ -1,3 +1,4 @@
+import sys
 import os
 import threading
 import sqlite3
@@ -57,6 +58,8 @@ class Selection(object):
         self._database.selections.remove(self)
 
     def add(self, filenames, state=0):
+        if isinstance(filenames, str):
+            filenames = [filenames]
         self._conn.executemany(
             'INSERT OR IGNORE INTO %(db)s.%(file_states)s VALUES (?, ?)'
             % self._names,
@@ -238,6 +241,9 @@ class Squirrel(Selection):
                     WHERE old.kind_codes_id == %(kind_codes)s.kind_codes_id;
                 END''' % self._names)
 
+    def __del__(self):
+        self.delete()
+
     def delete(self):
         self._conn.execute(
             'DROP TABLE %(db)s.%(nuts)s' % self._names)
@@ -247,15 +253,23 @@ class Squirrel(Selection):
 
         Selection.delete(self)
 
-    def print_tables(self):
+    def print_tables(self, stream=None):
+        if stream is None:
+            stream = sys.stdout
+
+        w = stream.write
+
+        w('\n')
         for table in [
                 '%(db)s.%(file_states)s',
                 '%(db)s.%(nuts)s']:
 
-            print()
-            print('-' * 64)
-            print(table % self._names)
-            print('-' * 64)
+            w('-' * 64)
+            w('\n')
+            w(table % self._names)
+            w('\n')
+            w('-' * 64)
+            w('\n')
             sql = ('SELECT * FROM %s' % table) % self._names
             tab = []
             for row in self._conn.execute(sql):
@@ -263,9 +277,10 @@ class Squirrel(Selection):
 
             widths = [max(len(x) for x in col) for col in zip(*tab)]
             for row in tab:
-                print(
-                    ' '.join(x.ljust(wid) for (x, wid) in zip(row, widths)))
-            print()
+                w(' '.join(x.ljust(wid) for (x, wid) in zip(row, widths)))
+                w('\n')
+
+            w('\n')
 
     def add(self, filenames, format='detect', check_mtime=True):
 
@@ -304,6 +319,8 @@ class Squirrel(Selection):
         self._sources.append(fdsn.FDSNSource(site))
 
     def undig_span(self, tmin, tmax):
+        '''Get nuts intersecting with the half open interval [tmin, tmax[.'''
+
         tmin_seconds, tmin_offset = model.tsplit(tmin)
         tmax_seconds, tmax_offset = model.tsplit(tmax)
 
@@ -356,7 +373,7 @@ class Squirrel(Selection):
 
         for row in self._conn.execute(sql, args):
             nut = model.Nut(values_nocheck=row)
-            if nut.tmin < tmax and tmin <= nut.tmax:
+            if nut.tmin < tmax and tmin < nut.tmax:
                 yield nut
 
     def undig_span_naiv(self, tmin, tmax):
@@ -388,7 +405,7 @@ class Squirrel(Selection):
 
         for row in self._conn.execute(sql, (tmin_seconds, tmax_seconds+1)):
             nut = model.Nut(values_nocheck=row)
-            if nut.tmin < tmax and tmin <= nut.tmax:
+            if nut.tmin < tmax and tmin < nut.tmax:
                 yield nut
 
     def tspan(self):
@@ -412,15 +429,16 @@ class Squirrel(Selection):
             args.append(kind)
 
         sql = ('''
-            SELECT DISTINCT kind_codes.codes FROM %(db)s.%(kind_codes)s 
+            SELECT DISTINCT kind_codes.codes FROM %(db)s.%(kind_codes)s
             INNER JOIN kind_codes
             WHERE %(db)s.%(kind_codes)s.kind_codes_id == kind_codes.rowid
+                AND kind_codes.count > 0
                 ''' + sel + '''
             ORDER BY kind_codes.codes
         ''') % self._names
 
         for row in self._conn.execute(sql, args):
-            yield row[0].split('\0')
+            yield tuple(row[0].split('\0'))
 
     def iter_kinds(self, codes=None):
         args = []
@@ -430,9 +448,10 @@ class Squirrel(Selection):
             args.append('\0'.join(codes))
 
         sql = ('''
-            SELECT kind_codes.codes FROM %(db)s.%(kind_codes)s 
+            SELECT kind_codes.kind FROM %(db)s.%(kind_codes)s
             INNER JOIN kind_codes
             WHERE %(db)s.%(kind_codes)s.kind_codes_id == kind_codes.rowid
+                AND kind_codes.count > 0
                 ''' + sel + '''
             ORDER BY kind_codes.kind
         ''') % self._names

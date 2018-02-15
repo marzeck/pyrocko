@@ -208,7 +208,7 @@ class Nut(Object):
             self.tmin_seconds = int_or_none(tmin_seconds)
             self.tmin_offset = float(tmin_offset)
             self.tmax_seconds = int_or_none(tmax_seconds)
-            self.tmax_offset = float(tmin_offset)
+            self.tmax_offset = float(tmax_offset)
             self.deltat = float_or_none(deltat)
             self.file_name = str_or_none(file_name)
             self.file_segment = int_or_none(file_segment)
