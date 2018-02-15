@@ -35,7 +35,7 @@ class FormatDetectionFailed(FileLoadError):
             self, 'format detection failed for file: %s' % filename)
 
 
-class UnknownFormat(FileLoadError):
+class UnknownFormat(Exception):
     def __init__(self, format):
         FileLoadError.__init__(
             self, 'unknown format: %s' % format)
@@ -59,7 +59,7 @@ def detect_format(filename):
             data = f.read(512)
 
     except OSError as e:
-        raise FileLoadError(e)
+        raise FormatDetectionFailed(filename)
 
     fmt = None
     for mod in backend_modules:
@@ -139,6 +139,7 @@ def iload(
 
         it = ((fn, []) for fn in filenames)
 
+    ifile = 0
     for filename, old_nuts in it:
         try:
             if check_mtime and old_nuts and old_nuts[0].file_modified():
@@ -149,7 +150,8 @@ def iload(
 
             if old_nuts:
                 db_only_operation = not content or all(
-                    nut.kind in content and nut.content_in_db for nut in old_nuts)
+                    nut.kind in content and nut.content_in_db
+                    for nut in old_nuts)
 
                 if db_only_operation:
                     logger.debug('using cached information for file %s, '
@@ -201,7 +203,9 @@ def iload(
             if database:
                 database.remove(filename)
 
-            continue
+        ifile += 1
+        if database and commit and ifile % 1000 == 0:
+            database.commit()
 
     if database:
         if commit:

@@ -230,7 +230,8 @@ class Nut(Object):
         return io.get_format_provider(self.file_format)
 
     def file_modified(self):
-        return self.get_io_backend().get_mtime(self.file_name) != self.file_mtime
+        return self.get_io_backend().get_mtime(self.file_name) \
+            != self.file_mtime
 
     @property
     def equality_values(self):

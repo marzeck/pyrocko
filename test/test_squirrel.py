@@ -18,6 +18,7 @@ except ImportError:
 
 
 class SquirrelTestCase(unittest.TestCase):
+    tempdirs = []
 
     test_files = [
         ('test1.mseed', 'mseed'),
@@ -28,10 +29,30 @@ class SquirrelTestCase(unittest.TestCase):
         ('test1.stations', 'pyrocko_stations'),
         ('test1.cube', 'datacube')]
 
+    @classmethod
+    def setUpClass(cls):
+        cls.tempdirs.append(tempfile.mkdtemp())
+        cls.tempdir = cls.tempdirs[0]
+
+    @classmethod
+    def tearDownClass(cls):
+        for d in cls.tempdirs:
+            shutil.rmtree(d)
+
     def test_detect(self):
         for (fn, format) in SquirrelTestCase.test_files:
             fpath = common.test_data_file(fn)
             self.assertEqual(format, squirrel.detect_format(fpath))
+
+        fpath = op.join(self.tempdir, 'emptyfile')
+        with open(fpath, 'wb'):
+            pass
+
+        with self.assertRaises(squirrel.io.FormatDetectionFailed):
+            squirrel.detect_format(fpath)
+
+        with self.assertRaises(squirrel.io.FormatDetectionFailed):
+            squirrel.detect_format('nonexist')
 
     def test_load(self):
         ii = 0
@@ -74,6 +95,20 @@ class SquirrelTestCase(unittest.TestCase):
             ii += 1
 
         assert ii == 396
+
+        fpath = op.join(self.tempdir, 'emptyfile')
+        with open(fpath, 'wb'):
+            pass
+
+        ii = 0
+        for nut in squirrel.iload(fpath):
+            ii += 1
+
+        assert ii == 0
+
+        with self.assertRaises(squirrel.io.UnknownFormat):
+            for nut in squirrel.iload(fpath, format='nonexist'):
+                pass
 
     def test_query_mtimes(self):
         fpaths = [
@@ -147,7 +182,7 @@ class SquirrelTestCase(unittest.TestCase):
 
     def test_add_update(self):
 
-        tempdir = tempfile.mkdtemp('test_add_update')
+        tempdir = os.path.join(self.tempdir, 'test_add_update')
 
         def make_files(vers):
             tr = trace.Trace(
@@ -159,7 +194,6 @@ class SquirrelTestCase(unittest.TestCase):
 
         database = squirrel.Database()
         sq = squirrel.Squirrel(database)
-
 
         assert sq.get_nfiles() == 0
         assert sq.get_nnuts() == 0
@@ -173,7 +207,7 @@ class SquirrelTestCase(unittest.TestCase):
         assert sq.get_nnuts() == 1
 
         assert sq.tspan() == (0., 1.)
-        
+
         f = StringIO()
         sq.print_tables(stream=f)
 
@@ -250,7 +284,7 @@ class SquirrelTestCase(unittest.TestCase):
 
         squirrel.io.virtual.add_nuts(all_nuts)
 
-        dbfilename = '/tmp/squirrel_benchmark_chop.db'
+        dbfilename = os.path.join(self.tempdir, 'squirrel_benchmark_chop.db')
         if os.path.exists(dbfilename):
             os.unlink(dbfilename)
 
@@ -311,7 +345,8 @@ class SquirrelTestCase(unittest.TestCase):
         print(bench)
 
     def test_loading(self, with_pile=False, hours=1):
-        dir = '/tmp/testdataset_d_%i' % hours
+        dir = op.join(tempfile.gettempdir(), 'testdataset_d_%i' % hours)
+
         if not os.path.exists(dir):
             common.make_dataset(dir, tinc=36., tlen=hours*common.H)
 
@@ -346,7 +381,7 @@ class SquirrelTestCase(unittest.TestCase):
 
             assert ii == len(fns)
 
-        dbfilename = '/tmp/squirrel.db'
+        dbfilename = op.join(self.tempdir, 'db.squirrel')
         if os.path.exists(dbfilename):
             os.unlink(dbfilename)
         database = squirrel.Database(dbfilename)

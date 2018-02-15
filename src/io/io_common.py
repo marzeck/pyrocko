@@ -36,6 +36,6 @@ class FileSaveError(FileError):
 
 def get_mtime(filename):
     try:
-        return os.stat(filename)[8]
+        return float(os.stat(filename)[8])
     except OSError as e:
         raise FileLoadError(e)

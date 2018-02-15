@@ -8,6 +8,7 @@ from pyrocko.io_common import FileLoadError
 from pyrocko.squirrel import model, io
 from pyrocko.squirrel.client import fdsn
 from pyrocko.guts import Object, Int, List, String
+from pyrocko import config
 
 
 def iitems(d):
@@ -17,21 +18,41 @@ def iitems(d):
         return d.items()
 
 
-icount = 0
-lock = threading.Lock()
+g_databases = {}
+
+
+def get_database(database=None):
+    if isinstance(database, Database):
+        return database
+
+    if database is None:
+        database = os.path.join(config.config().cache_dir, 'db.squirrel')
+
+    database = os.path.abspath(database)
+
+    if database not in g_databases:
+        g_databases[database] = Database(database)
+
+    return g_databases[database]
+
+
+g_icount = 0
+g_lock = threading.Lock()
 
 
 def make_unique_name():
-    with lock:
-        global icount
-        name = '%i_%i' % (os.getpid(), icount)
-        icount += 1
+    with g_lock:
+        global g_icount
+        name = '%i_%i' % (os.getpid(), g_icount)
+        g_icount += 1
 
     return name
 
 
 class Selection(object):
-    def __init__(self, database):
+    def __init__(self, database=None):
+        database = get_database(database)
+
         self.name = 'selection_' + make_unique_name()
         self._database = database
         self._conn = self._database.get_connection()
@@ -173,7 +194,7 @@ class SquirrelStats(Object):
 
 class Squirrel(Selection):
 
-    def __init__(self, database):
+    def __init__(self, database=None):
         Selection.__init__(self, database)
         c = self._conn
 
