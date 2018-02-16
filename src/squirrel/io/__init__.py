@@ -118,7 +118,7 @@ def iload(
                     'iload: database argument must be None when called with a '
                     'selection')
 
-            database = selection.database()
+            database = selection.get_database()
 
     temp_selection = None
     if database:
@@ -212,6 +212,6 @@ def iload(
             database.commit()
 
         if temp_selection:
-            temp_selection.delete()
+            del temp_selection
 
     logger.debug('iload: from db: %i, from files: %i' % (n_db, n_load))

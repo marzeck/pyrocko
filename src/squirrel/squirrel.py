@@ -1,5 +1,6 @@
 import sys
 import os
+import re
 import threading
 import sqlite3
 from collections import defaultdict, Counter
@@ -50,33 +51,50 @@ def make_unique_name():
 
 
 class Selection(object):
-    def __init__(self, database=None):
+    def __init__(self, database=None, persistent=None):
+        if database is None and persistent is not None:
+            raise Exception(
+                'should not use persistent selection with shared global '
+                'database as this would decrease its performance')
+
         database = get_database(database)
 
-        self.name = 'selection_' + make_unique_name()
+        if persistent is not None:
+            assert isinstance(persistent, str)
+            if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', persistent):
+                raise Exception(
+                    'invalid persistent selection name: %s' % persistent)
+
+            self.name = 'psel_' + persistent
+        else:
+            self.name = 'sel_' + make_unique_name()
+
+        self._persistent = persistent is not None
         self._database = database
         self._conn = self._database.get_connection()
         self._sources = []
 
         self._names = {
-            'db': 'temp',
+            'db': 'main' if self._persistent else 'temp',
             'file_states': self.name + '_file_states'}
 
         self._conn.execute(
-            '''CREATE TEMP TABLE %(db)s.%(file_states)s (
+            '''CREATE TABLE IF NOT EXISTS %(db)s.%(file_states)s (
                 file_name text PRIMARY KEY,
                 file_state integer)''' % self._names)
 
-        self._database.selections.append(self)
+    def __del__(self):
+        if not self._persistent:
+            self.delete()
+        else:
+            self._conn.commit()
 
-    def database(self):
+    def get_database(self):
         return self._database
 
     def delete(self):
         self._conn.execute(
             'DROP TABLE %(db)s.%(file_states)s' % self._names)
-
-        self._database.selections.remove(self)
 
     def add(self, filenames, state=0):
         if isinstance(filenames, str):
@@ -194,8 +212,8 @@ class SquirrelStats(Object):
 
 class Squirrel(Selection):
 
-    def __init__(self, database=None):
-        Selection.__init__(self, database)
+    def __init__(self, database=None, persistent=None):
+        Selection.__init__(self, database=database, persistent=persistent)
         c = self._conn
 
         self._names.update({
@@ -203,7 +221,7 @@ class Squirrel(Selection):
             'kind_codes': self.name + '_kind_codes'})
 
         c.execute(
-            '''CREATE TABLE %(db)s.%(nuts)s (
+            '''CREATE TABLE IF NOT EXISTS %(db)s.%(nuts)s (
                 file_id integer,
                 file_segment integer,
                 file_element integer,
@@ -218,32 +236,32 @@ class Squirrel(Selection):
             ''' % self._names)
 
         c.execute(
-            '''CREATE TABLE %(db)s.%(kind_codes)s (
+            '''CREATE TABLE IF NOT EXISTS %(db)s.%(kind_codes)s (
                 kind_codes_id integer PRIMARY KEY,
                 count integer)''' % self._names)
 
         c.execute(
-            '''CREATE INDEX %(db)s.%(nuts)s_index_tmin_seconds
+            '''CREATE INDEX IF NOT EXISTS %(db)s.%(nuts)s_index_tmin_seconds
                 ON %(nuts)s (tmin_seconds)
             ''' % self._names)
 
         c.execute(
-            '''CREATE INDEX %(db)s.%(nuts)s_index_tmax_seconds
+            '''CREATE INDEX IF NOT EXISTS %(db)s.%(nuts)s_index_tmax_seconds
                 ON %(nuts)s (tmax_seconds)''' % self._names)
 
         c.execute(
-            '''CREATE INDEX %(db)s.%(nuts)s_index_kscale
+            '''CREATE INDEX IF NOT EXISTS %(db)s.%(nuts)s_index_kscale
                 ON %(nuts)s (kscale, tmin_seconds)''' % self._names)
 
         c.execute(
-            '''CREATE TRIGGER %(db)s.%(nuts)s_delete_nuts
+            '''CREATE TRIGGER IF NOT EXISTS %(db)s.%(nuts)s_delete_nuts
                 BEFORE DELETE ON main.files FOR EACH ROW
                 BEGIN
                   DELETE FROM %(nuts)s where file_id == old.rowid;
                 END''' % self._names)
 
         c.execute(
-            '''CREATE TRIGGER %(db)s.%(nuts)s_increment_kind_codes
+            '''CREATE TRIGGER IF NOT EXISTS %(db)s.%(nuts)s_inc_kind_codes
                 BEFORE INSERT ON %(nuts)s FOR EACH ROW
                 BEGIN
                     INSERT OR IGNORE INTO %(kind_codes)s VALUES
@@ -254,16 +272,13 @@ class Squirrel(Selection):
                 END''' % self._names)
 
         c.execute(
-            '''CREATE TRIGGER %(db)s.%(nuts)s_decrement_kind_codes
+            '''CREATE TRIGGER IF NOT EXISTS %(db)s.%(nuts)s_dec_kind_codes
                 BEFORE DELETE ON %(nuts)s FOR EACH ROW
                 BEGIN
                     UPDATE %(kind_codes)s
                     SET count = count - 1
                     WHERE old.kind_codes_id == %(kind_codes)s.kind_codes_id;
                 END''' % self._names)
-
-    def __del__(self):
-        self.delete()
 
     def delete(self):
         self._conn.execute(
@@ -303,11 +318,13 @@ class Squirrel(Selection):
 
             w('\n')
 
-    def add(self, filenames, format='detect', check_mtime=True):
+    def add(self, filenames, kinds=None, format='detect', check_mtime=True):
+        if isinstance(kinds, str):
+            kinds = (kinds,)
 
         Selection.add(self, filenames)
         self._load(format, check_mtime)
-        self._update_nuts()
+        self._update_nuts(kinds)
 
     def _load(self, format, check_mtime):
         for _ in io.iload(
@@ -318,9 +335,15 @@ class Squirrel(Selection):
                 check_mtime=check_mtime):
             pass
 
-    def _update_nuts(self):
+    def _update_nuts(self, kinds):
         c = self._conn
-        c.execute(
+        w_kinds = ''
+        args = []
+        if kinds is not None:
+            w_kinds = 'AND nuts.kind IN (%s)' % ', '.join('?'*len(kinds))
+            args.append(kinds)
+
+        c.execute((
             '''INSERT INTO %(db)s.%(nuts)s
                 SELECT nuts.* FROM %(db)s.%(file_states)s
                 INNER JOIN files
@@ -328,7 +351,7 @@ class Squirrel(Selection):
                 INNER JOIN nuts
                 ON files.rowid = nuts.file_id
                 WHERE %(db)s.%(file_states)s.file_state != 2
-            ''' % self._names)
+            ''' + w_kinds) % self._names, args)
 
         c.execute(
             '''
@@ -469,7 +492,7 @@ class Squirrel(Selection):
             args.append('\0'.join(codes))
 
         sql = ('''
-            SELECT kind_codes.kind FROM %(db)s.%(kind_codes)s
+            SELECT DISTINCT kind_codes.kind FROM %(db)s.%(kind_codes)s
             INNER JOIN kind_codes
             WHERE %(db)s.%(kind_codes)s.kind_codes_id == kind_codes.rowid
                 AND kind_codes.count > 0
@@ -496,7 +519,7 @@ class Squirrel(Selection):
         for row in self._conn.execute(sql):
             return row[0]
 
-    def stats(self):
+    def get_stats(self):
         return SquirrelStats(
             nfiles=self.get_nfiles(),
             nnuts=self.get_nnuts(),
@@ -504,7 +527,7 @@ class Squirrel(Selection):
             codes=list(self.iter_codes()))
 
     def __str__(self):
-        return str(self.stats())
+        return str(self.get_stats())
 
     def waveform(self, selection=None, **kwargs):
         pass
@@ -538,12 +561,12 @@ class Squirrel(Selection):
 
 
 class Database(object):
-    def __init__(self, database=':memory:'):
-        self._conn = sqlite3.connect(database)
+    def __init__(self, database_path=':memory:'):
+        self._database_path = database_path
+        self._conn = sqlite3.connect(database_path)
         self._conn.text_factory = str
         self._initialize_db()
         self._need_commit = False
-        self.selections = []
 
     def get_connection(self):
         return self._conn
@@ -711,7 +734,7 @@ class Database(object):
         for fn, nuts in selection.undig_grouped():
             yield fn, nuts
 
-        selection.delete()
+        del selection
 
     def get_mtime(self, filename):
         sql = '''
@@ -727,7 +750,7 @@ class Database(object):
     def get_mtimes(self, filenames):
         selection = self.new_selection(filenames)
         mtimes = selection.get_mtimes()
-        selection.delete()
+        del selection
         return mtimes
 
     def new_selection(self, filenames=None, state=0):
