@@ -75,7 +75,7 @@ def iload(
         segment=None,
         format='detect',
         database=None,
-        check_mtime=True,
+        check=True,
         commit=True,
         skip_unchanged=False,
         content=['waveform', 'station', 'channel', 'response', 'event']):
@@ -90,8 +90,9 @@ def iload(
     :param format: ``str`` file format or ``'detect'`` for autodetection
     :param database: :py:class:`pyrocko.squirrel.Database` object to use
         as index cache
-    :param check_mtime: ``bool`` flag, whether to check the modification time
-        of every file
+    :param check:  ``bool`` flag, if ``True``, investigate modification time
+        and file sizes of known files to debunk modified files (pessimistic),
+        or ``False`` to deactivate checks (optimistic)
     :param commit: ``bool`` flag, whether to commit updated information to the
         index cache
     :param skip_unchanged: ``bool`` flag, if ``True``, only yield index nuts
@@ -127,7 +128,7 @@ def iload(
             selection = temp_selection
 
         if skip_unchanged:
-            selection.flag_unchanged(check_mtime)
+            selection.flag_unchanged(check)
             it = selection.undig_grouped(skip_unchanged=True)
         else:
             it = selection.undig_grouped()
@@ -139,10 +140,14 @@ def iload(
 
         it = ((fn, []) for fn in filenames)
 
-    ifile = 0
+    n_files = 0
     for filename, old_nuts in it:
+        n_files += 1
+        if database and commit and n_files % 1000 == 0:
+            database.commit()
+
         try:
-            if check_mtime and old_nuts and old_nuts[0].file_modified():
+            if check and old_nuts and old_nuts[0].file_modified():
                 old_nuts = []
 
             if segment is not None:
@@ -175,7 +180,7 @@ def iload(
                 format_this = format
 
             mod = get_format_provider(format_this)
-            mtime = mod.get_mtime(filename)
+            mtime, size = mod.get_stats(filename)
 
             logger.debug('reading file %s' % filename)
             nuts = []
@@ -183,6 +188,7 @@ def iload(
                 nut.file_name = filename
                 nut.file_format = format_this
                 nut.file_mtime = mtime
+                nut.file_size = size
 
                 nuts.append(nut)
                 n_load += 1
@@ -203,9 +209,6 @@ def iload(
             if database:
                 database.remove(filename)
 
-        ifile += 1
-        if database and commit and ifile % 1000 == 0:
-            database.commit()
 
     if database:
         if commit:
@@ -214,4 +217,5 @@ def iload(
         if temp_selection:
             del temp_selection
 
-    logger.debug('iload: from db: %i, from files: %i' % (n_db, n_load))
+    logger.debug('iload: from db: %i, from files: %i, files: %i' % (
+        n_db, n_load, n_files))

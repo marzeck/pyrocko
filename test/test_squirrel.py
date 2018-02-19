@@ -110,33 +110,6 @@ class SquirrelTestCase(unittest.TestCase):
             for nut in squirrel.iload(fpath, format='nonexist'):
                 pass
 
-    def test_query_mtimes(self):
-        fpaths = [
-            common.test_data_file(fn)
-            for (fn, _) in SquirrelTestCase.test_files]
-
-        database = squirrel.Database()
-        for nut in squirrel.iload(fpaths, database=database, content=[]):
-            pass
-
-        mtimes_ref = dict(
-            (fpath, os.stat(fpath)[8]) for fpath in fpaths)
-
-        def check(fpaths, mtimes):
-            for fpath, mtime in zip(fpaths, mtimes):
-                self.assertEqual(mtimes_ref.get(fpath, None), mtime)
-
-        fpaths1 = fpaths + ['nonexistent']
-        mtimes = database.get_mtimes(fpaths)
-        check(fpaths, mtimes)
-
-        fpaths2 = fpaths1[::-2]
-        mtimes2 = database.get_mtimes(fpaths2)
-        check(fpaths2, mtimes2)
-
-        mtimes3 = [database.get_mtime(fpath) for fpath in fpaths1]
-        check(fpaths1, mtimes3)
-
     def test_dig_undig(self):
         nuts = []
         for file_name in 'abcde':
@@ -144,7 +117,6 @@ class SquirrelTestCase(unittest.TestCase):
                 nuts.append(squirrel.Nut(
                     file_name=file_name,
                     file_format='test',
-                    file_mtime=0.0,
                     file_segment=0,
                     file_element=file_element,
                     kind='test'))
@@ -214,7 +186,7 @@ class SquirrelTestCase(unittest.TestCase):
         time.sleep(2)
 
         fns = make_files(1)
-        sq.add(fns, check_mtime=False)
+        sq.add(fns, check=False)
         assert sq.get_nfiles() == 1
         assert sq.get_nnuts() == 1
 
@@ -229,7 +201,7 @@ class SquirrelTestCase(unittest.TestCase):
         assert len(list(sq.undig_span(0.5, 1.5))) == 1
         assert len(list(sq.undig_span(0.2, 0.7))) == 1
 
-        sq.add(fns, check_mtime=True)
+        sq.add(fns, check=True)
         assert sq.get_nfiles() == 1
         assert sq.get_nnuts() == 1
 
@@ -240,7 +212,7 @@ class SquirrelTestCase(unittest.TestCase):
 
         shutil.rmtree(tempdir)
 
-        sq.add(fns, check_mtime=True)
+        sq.add(fns, check=True)
         assert sq.get_nfiles() == 1
         assert sq.get_nnuts() == 0
 
@@ -310,7 +282,7 @@ class SquirrelTestCase(unittest.TestCase):
             sq = squirrel.Squirrel(database=database)
             sq.add(
                 ('virtual:file_%i' % it for it in range(nt)),
-                check_mtime=False)
+                check=False)
 
         with bench.run('get tspan'):
             tmin, tmax = sq.tspan()
@@ -318,6 +290,9 @@ class SquirrelTestCase(unittest.TestCase):
         with bench.run('get codes'):
             for codes in sq.iter_codes():
                 pass
+
+        with bench.run('get total size'):
+            sq.get_total_size()
 
         expect = []
         nwin = 100
@@ -403,7 +378,7 @@ class SquirrelTestCase(unittest.TestCase):
         with bench.run('iload, rescan, no mtime check'):
             ii = 0
             for nut in squirrel.iload(fns, content=[], database=database,
-                                      check_mtime=False):
+                                      check=False):
                 ii += 1
 
             assert ii == len(fns)
@@ -411,7 +386,7 @@ class SquirrelTestCase(unittest.TestCase):
         with bench.run('iload, rescan, skip unchanged'):
             ii = 0
             for nut in squirrel.iload(fns, content=[], database=database,
-                                      skip_unchanged=True, check_mtime=True):
+                                      skip_unchanged=True, check=True):
                 ii += 1
 
             assert ii == 0
@@ -419,10 +394,22 @@ class SquirrelTestCase(unittest.TestCase):
         with bench.run('iload, rescan, skip known'):
             ii = 0
             for nut in squirrel.iload(fns, content=[], database=database,
-                                      skip_unchanged=True, check_mtime=False):
+                                      skip_unchanged=True, check=False):
                 ii += 1
 
             assert ii == 0
+
+        sel = database.new_selection(fns, state=1)
+
+        with bench.run('iload, rescan, skip known, preselected'):
+            ii = 0
+            for nut in squirrel.iload(sel, content=[],
+                                      skip_unchanged=True, check=False):
+                ii += 1
+
+            assert ii == 0
+
+        del sel
 
         with bench.run('undig'):
             ii = 0
@@ -431,12 +418,9 @@ class SquirrelTestCase(unittest.TestCase):
 
             assert ii == len(fns)
 
-        with bench.run('mtime, file-by-file'):
-            for fn in fns:
-                database.get_mtime(fn)
-
-        with bench.run('mtime, batch'):
-            database.get_mtimes(fns)
+        with bench.run('add to squirrel'):
+            sq = squirrel.Squirrel(database=database)
+            sq.add(fns)
 
         return bench
 

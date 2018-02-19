@@ -34,8 +34,9 @@ class FileSaveError(FileError):
     '''Raised when a problem occurred while saving of a file.'''
 
 
-def get_mtime(filename):
+def get_stats(filename):
     try:
-        return float(os.stat(filename)[8])
+        s = os.stat(filename)
+        return float(s.st_mtime), s.st_size
     except OSError as e:
         raise FileLoadError(e)

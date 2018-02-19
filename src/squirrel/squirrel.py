@@ -3,12 +3,11 @@ import os
 import re
 import threading
 import sqlite3
-from collections import defaultdict, Counter
 
 from pyrocko.io_common import FileLoadError
 from pyrocko.squirrel import model, io
 from pyrocko.squirrel.client import fdsn
-from pyrocko.guts import Object, Int, List, String
+from pyrocko.guts import Object, Int, List, String, Timestamp
 from pyrocko import config
 
 
@@ -55,7 +54,7 @@ class Selection(object):
         if database is None and persistent is not None:
             raise Exception(
                 'should not use persistent selection with shared global '
-                'database as this would decrease its performance')
+                'database as this would impair its performance')
 
         database = get_database(database)
 
@@ -76,11 +75,12 @@ class Selection(object):
 
         self._names = {
             'db': 'main' if self._persistent else 'temp',
-            'file_states': self.name + '_file_states'}
+            'file_states': self.name + '_file_states',
+            'bulkinsert': self.name + '_bulkinsert'}
 
         self._conn.execute(
             '''CREATE TABLE IF NOT EXISTS %(db)s.%(file_states)s (
-                file_name text PRIMARY KEY,
+                file_id integer PRIMARY KEY,
                 file_state integer)''' % self._names)
 
     def __del__(self):
@@ -99,10 +99,32 @@ class Selection(object):
     def add(self, filenames, state=0):
         if isinstance(filenames, str):
             filenames = [filenames]
+        self._conn.execute(
+            '''CREATE TEMP TABLE temp.%(bulkinsert)s
+                (file_name text)
+            ''' % self._names)
+
         self._conn.executemany(
-            'INSERT OR IGNORE INTO %(db)s.%(file_states)s VALUES (?, ?)'
-            % self._names,
-            ((s, state) for s in filenames))
+            '''INSERT INTO temp.%(bulkinsert)s VALUES (?)''' % self._names,
+            ((x,) for x in filenames))
+
+        self._conn.execute(
+            '''INSERT OR IGNORE INTO files
+                SELECT file_name, NULL, NULL, NULL
+                FROM temp.%(bulkinsert)s
+            ''' % self._names)
+
+        self._conn.execute(
+            '''
+                INSERT OR IGNORE INTO %(db)s.%(file_states)s
+                SELECT files.rowid, ?
+                FROM temp.%(bulkinsert)s
+                INNER JOIN files
+                ON temp.%(bulkinsert)s.file_name == files.file_name
+            ''' % self._names, (state,))
+
+        self._conn.execute(
+            'DROP TABLE temp.%(bulkinsert)s' % self._names)
 
     def undig_grouped(self, skip_unchanged=False):
 
@@ -115,10 +137,10 @@ class Selection(object):
 
         sql = ('''
             SELECT
-                %(db)s.%(file_states)s.file_name,
                 files.file_name,
                 files.file_format,
                 files.file_mtime,
+                files.file_size,
                 nuts.file_segment,
                 nuts.file_element,
                 kind_codes.kind,
@@ -130,7 +152,7 @@ class Selection(object):
                 nuts.deltat
             FROM %(db)s.%(file_states)s
             LEFT OUTER JOIN files
-            ON %(db)s.%(file_states)s.file_name = files.file_name
+                ON %(db)s.%(file_states)s.file_id = files.rowid
             LEFT OUTER JOIN nuts
                 ON files.rowid = nuts.file_id
             LEFT OUTER JOIN kind_codes
@@ -147,57 +169,65 @@ class Selection(object):
                 nuts = []
 
             if values[1] is not None:
-                nuts.append(model.Nut(values_nocheck=values[1:]))
+                nuts.append(model.Nut(values_nocheck=values))
 
             fn = values[0]
 
         if fn is not None:
             yield fn, nuts
 
-    def iter_mtimes(self):
+    def flag_unchanged(self, check=True):
         sql = '''
-            SELECT
-                files.file_name,
-                files.file_format,
-                files.file_mtime
-            FROM %(db)s.%(file_states)s
-            LEFT OUTER JOIN files
-            ON %(db)s.%(file_states)s.file_name = files.file_name
-            ORDER BY %(db)s.%(file_states)s.rowid
+            UPDATE %(db)s.%(file_states)s
+            SET file_state = 0
+            WHERE (
+                SELECT file_mtime
+                FROM files
+                WHERE files.rowid == %(db)s.%(file_states)s.file_id) IS NULL
         ''' % self._names
 
-        for row in self._conn.execute(sql):
-            yield row
+        self._conn.execute(sql)
 
-    def get_mtimes(self):
-        return list(mtime for (_, _, mtime) in self.iter_mtimes())
-
-    def flag_unchanged(self, check_mtime=True):
+        if not check:
+            return
 
         def iter_filenames_states():
-            for filename, fmt, mtime_db in self.iter_mtimes():
-                if mtime_db is None or not os.path.exists(filename):
-                    yield 0, filename
+            sql = '''
+                SELECT
+                    files.rowid,
+                    files.file_name,
+                    files.file_format,
+                    files.file_mtime,
+                    files.file_size
+                FROM %(db)s.%(file_states)s
+                INNER JOIN files
+                    ON %(db)s.%(file_states)s.file_id == files.rowid
+                WHERE %(db)s.%(file_states)s.file_state != 0
+                ORDER BY %(db)s.%(file_states)s.rowid
+            ''' % self._names
+
+            for (file_id, filename, fmt, mtime_db,
+                    size_db) in self._conn.execute(sql):
+
+                try:
+                    mod = io.get_format_provider(fmt)
+                    file_stats = mod.get_stats(filename)
+                except FileLoadError:
+                    yield 0, file_id
+                    continue
+                except io.UnknownFormat:
                     continue
 
-                if check_mtime:
-                    try:
-                        mod = io.get_format_provider(fmt)
-                        mtime_file = mod.get_mtime(filename)
-                    except FileLoadError:
-                        yield 0, filename
-                        continue
-                    except io.UnknownFormat:
-                        continue
+                if (mtime_db, size_db) != file_stats:
+                    yield 0, file_id
+                    continue
 
-                    if mtime_db != mtime_file:
-                        yield 0, filename
-                        continue
+        # could better use callback function here...
 
         sql = '''
             UPDATE %(db)s.%(file_states)s
             SET file_state = ?
-            WHERE file_name = ?
+            WHERE file_id = ?
         ''' % self._names
 
         self._conn.executemany(sql, iter_filenames_states())
@@ -208,6 +238,9 @@ class SquirrelStats(Object):
     nnuts = Int.T()
     codes = List.T(List.T(String.T()))
     kinds = List.T(String.T())
+    total_size = Int.T()
+    tmin = Timestamp.T(optional=True)
+    tmax = Timestamp.T(optional=True)
 
 
 class Squirrel(Selection):
@@ -218,7 +251,7 @@ class Squirrel(Selection):
 
         self._names.update({
             'nuts': self.name + '_nuts',
-            'kind_codes': self.name + '_kind_codes'})
+            'kind_codes_count': self.name + '_kind_codes_count'})
 
         c.execute(
             '''CREATE TABLE IF NOT EXISTS %(db)s.%(nuts)s (
@@ -236,7 +269,7 @@ class Squirrel(Selection):
             ''' % self._names)
 
         c.execute(
-            '''CREATE TABLE IF NOT EXISTS %(db)s.%(kind_codes)s (
+            '''CREATE TABLE IF NOT EXISTS %(db)s.%(kind_codes_count)s (
                 kind_codes_id integer PRIMARY KEY,
                 count integer)''' % self._names)
 
@@ -261,23 +294,32 @@ class Squirrel(Selection):
                 END''' % self._names)
 
         c.execute(
+            '''CREATE TRIGGER IF NOT EXISTS %(db)s.%(nuts)s_delete_nuts2
+                BEFORE UPDATE ON main.files FOR EACH ROW
+                BEGIN
+                  DELETE FROM %(nuts)s where file_id == old.rowid;
+                END''' % self._names)
+
+        c.execute(
             '''CREATE TRIGGER IF NOT EXISTS %(db)s.%(nuts)s_inc_kind_codes
                 BEFORE INSERT ON %(nuts)s FOR EACH ROW
                 BEGIN
-                    INSERT OR IGNORE INTO %(kind_codes)s VALUES
+                    INSERT OR IGNORE INTO %(kind_codes_count)s VALUES
                     (new.kind_codes_id, 0);
-                    UPDATE %(kind_codes)s
+                    UPDATE %(kind_codes_count)s
                     SET count = count + 1
-                    WHERE new.kind_codes_id == %(kind_codes)s.kind_codes_id;
+                    WHERE new.kind_codes_id
+                        == %(kind_codes_count)s.kind_codes_id;
                 END''' % self._names)
 
         c.execute(
             '''CREATE TRIGGER IF NOT EXISTS %(db)s.%(nuts)s_dec_kind_codes
                 BEFORE DELETE ON %(nuts)s FOR EACH ROW
                 BEGIN
-                    UPDATE %(kind_codes)s
+                    UPDATE %(kind_codes_count)s
                     SET count = count - 1
-                    WHERE old.kind_codes_id == %(kind_codes)s.kind_codes_id;
+                    WHERE old.kind_codes_id
+                        == %(kind_codes_count)s.kind_codes_id;
                 END''' % self._names)
 
     def delete(self):
@@ -285,7 +327,7 @@ class Squirrel(Selection):
             'DROP TABLE %(db)s.%(nuts)s' % self._names)
 
         self._conn.execute(
-            'DROP TABLE %(db)s.%(kind_codes)s' % self._names)
+            'DROP TABLE %(db)s.%(kind_codes_count)s' % self._names)
 
         Selection.delete(self)
 
@@ -298,7 +340,9 @@ class Squirrel(Selection):
         w('\n')
         for table in [
                 '%(db)s.%(file_states)s',
-                '%(db)s.%(nuts)s']:
+                '%(db)s.%(nuts)s',
+                'files',
+                'nuts']:
 
             w('-' * 64)
             w('\n')
@@ -318,21 +362,21 @@ class Squirrel(Selection):
 
             w('\n')
 
-    def add(self, filenames, kinds=None, format='detect', check_mtime=True):
+    def add(self, filenames, kinds=None, format='detect', check=True):
         if isinstance(kinds, str):
             kinds = (kinds,)
 
         Selection.add(self, filenames)
-        self._load(format, check_mtime)
+        self._load(format, check)
         self._update_nuts(kinds)
 
-    def _load(self, format, check_mtime):
+    def _load(self, format, check):
         for _ in io.iload(
                 self,
                 content=[],
                 skip_unchanged=True,
                 format=format,
-                check_mtime=check_mtime):
+                check=check):
             pass
 
     def _update_nuts(self, kinds):
@@ -346,10 +390,8 @@ class Squirrel(Selection):
         c.execute((
             '''INSERT INTO %(db)s.%(nuts)s
                 SELECT nuts.* FROM %(db)s.%(file_states)s
-                INNER JOIN files
-                ON %(db)s.%(file_states)s.file_name = files.file_name
                 INNER JOIN nuts
-                ON files.rowid = nuts.file_id
+                    ON %(db)s.%(file_states)s.file_id == nuts.file_id
                 WHERE %(db)s.%(file_states)s.file_state != 2
             ''' + w_kinds) % self._names, args)
 
@@ -396,6 +438,7 @@ class Squirrel(Selection):
                 files.file_name,
                 files.file_format,
                 files.file_mtime,
+                files.file_size,
                 %(db)s.%(nuts)s.file_segment,
                 %(db)s.%(nuts)s.file_element,
                 kind_codes.kind,
@@ -407,9 +450,9 @@ class Squirrel(Selection):
                 %(db)s.%(nuts)s.deltat
             FROM files
             INNER JOIN %(db)s.%(nuts)s
-            ON files.rowid == %(db)s.%(nuts)s.file_id
+                ON files.rowid == %(db)s.%(nuts)s.file_id
             INNER JOIN kind_codes
-            ON %(db)s.%(nuts)s.kind_codes_id == kind_codes.rowid
+                ON %(db)s.%(nuts)s.kind_codes_id == kind_codes.rowid
             WHERE ( ''' + ' OR '.join(tmin_cond) + ''')
                 AND %(db)s.%(nuts)s.tmax_seconds >= ?
         ''') % self._names
@@ -429,6 +472,7 @@ class Squirrel(Selection):
                 files.file_name,
                 files.file_format,
                 files.file_mtime,
+                files.file_size,
                 %(db)s.%(nuts)s.file_segment,
                 %(db)s.%(nuts)s.file_element,
                 kind_codes.kind,
@@ -440,9 +484,9 @@ class Squirrel(Selection):
                 %(db)s.%(nuts)s.deltat
             FROM files
             INNER JOIN %(db)s.%(nuts)s
-            ON files.rowid == %(db)s.%(nuts)s.file_id
+                ON files.rowid == %(db)s.%(nuts)s.file_id
             INNER JOIN kind_codes
-            ON %(db)s.%(nuts)s.kind_codes_id == kind_codes.rowid
+                ON %(db)s.%(nuts)s.kind_codes_id == kind_codes.rowid
             WHERE %(db)s.%(nuts)s.tmax_seconds >= ?
                 AND %(db)s.%(nuts)s.tmin_seconds <= ?
         ''' % self._names
@@ -465,43 +509,15 @@ class Squirrel(Selection):
 
         return tmin, tmax
 
-    def iter_codes(self, kind=None):
-        args = []
-        sel = ''
-        if kind is not None:
-            sel = 'AND kind_codes.codes == ?'
-            args.append(kind)
-
-        sql = ('''
-            SELECT DISTINCT kind_codes.codes FROM %(db)s.%(kind_codes)s
-            INNER JOIN kind_codes
-            WHERE %(db)s.%(kind_codes)s.kind_codes_id == kind_codes.rowid
-                AND kind_codes.count > 0
-                ''' + sel + '''
-            ORDER BY kind_codes.codes
-        ''') % self._names
-
-        for row in self._conn.execute(sql, args):
-            yield tuple(row[0].split('\0'))
-
     def iter_kinds(self, codes=None):
-        args = []
-        sel = ''
-        if codes is not None:
-            sel = 'AND kind_codes.codes == ?'
-            args.append('\0'.join(codes))
+        return self._database._iter_kinds(
+            codes=codes,
+            kind_codes_count='%(db)s.%(kind_codes_count)s' % self._names)
 
-        sql = ('''
-            SELECT DISTINCT kind_codes.kind FROM %(db)s.%(kind_codes)s
-            INNER JOIN kind_codes
-            WHERE %(db)s.%(kind_codes)s.kind_codes_id == kind_codes.rowid
-                AND kind_codes.count > 0
-                ''' + sel + '''
-            ORDER BY kind_codes.kind
-        ''') % self._names
-
-        for row in self._conn.execute(sql):
-            yield row[0]
+    def iter_codes(self, kinds=None):
+        return self._database._iter_codes(
+            kind=kinds,
+            kind_codes_count='%(db)s.%(kind_codes_count)s' % self._names)
 
     def update_channel_inventory(self, selection):
         for source in self._sources:
@@ -519,12 +535,23 @@ class Squirrel(Selection):
         for row in self._conn.execute(sql):
             return row[0]
 
+    def get_total_size(self):
+        sql = '''
+            SELECT SUM(files.file_size) FROM %(db)s.%(file_states)s
+            INNER JOIN files
+                ON %(db)s.%(file_states)s.file_id = files.rowid
+        ''' % self._names
+
+        for row in self._conn.execute(sql):
+            return row[0]
+
     def get_stats(self):
         return SquirrelStats(
             nfiles=self.get_nfiles(),
             nnuts=self.get_nnuts(),
             kinds=list(self.iter_kinds()),
-            codes=list(self.iter_codes()))
+            codes=list(self.iter_codes()),
+            total_size=self.get_total_size())
 
     def __str__(self):
         return str(self.get_stats())
@@ -560,6 +587,14 @@ class Squirrel(Selection):
         pass
 
 
+class DatabaseStats(Object):
+    nfiles = Int.T()
+    nnuts = Int.T()
+    codes = List.T(List.T(String.T()))
+    kinds = List.T(String.T())
+    total_size = Int.T()
+
+
 class Database(object):
     def __init__(self, database_path=':memory:'):
         self._database_path = database_path
@@ -574,10 +609,14 @@ class Database(object):
     def _initialize_db(self):
         c = self._conn.cursor()
         c.execute(
+            '''PRAGMA recursive_triggers = true''')
+
+        c.execute(
             '''CREATE TABLE IF NOT EXISTS files (
                 file_name text PRIMARY KEY,
                 file_format text,
-                file_mtime float)''')
+                file_mtime float,
+                file_size integer)''')
 
         c.execute(
             '''CREATE TABLE IF NOT EXISTS nuts (
@@ -597,8 +636,12 @@ class Database(object):
             '''CREATE TABLE IF NOT EXISTS kind_codes (
                 kind text,
                 codes text,
-                count integer,
                 PRIMARY KEY (kind, codes))''')
+
+        c.execute(
+            '''CREATE TABLE IF NOT EXISTS kind_codes_count (
+                kind_codes_id integer PRIMARY KEY,
+                count integer)''')
 
         c.execute(
             '''CREATE INDEX IF NOT EXISTS index_nuts_file_id
@@ -612,10 +655,28 @@ class Database(object):
                 END''')
 
         c.execute(
+            '''CREATE TRIGGER IF NOT EXISTS delete_nuts2
+                BEFORE UPDATE ON files FOR EACH ROW
+                BEGIN
+                  DELETE FROM nuts where file_id == old.rowid;
+                END''')
+
+        c.execute(
+            '''CREATE TRIGGER IF NOT EXISTS increment_kind_codes
+                BEFORE INSERT ON nuts FOR EACH ROW
+                BEGIN
+                    INSERT OR IGNORE INTO kind_codes_count
+                    VALUES (new.kind_codes_id, 0);
+                    UPDATE kind_codes_count
+                    SET count = count + 1
+                    WHERE new.kind_codes_id == rowid;
+                END''')
+
+        c.execute(
             '''CREATE TRIGGER IF NOT EXISTS decrement_kind_codes
                 BEFORE DELETE ON nuts FOR EACH ROW
                 BEGIN
-                    UPDATE kind_codes
+                    UPDATE kind_codes_count
                     SET count = count - 1
                     WHERE old.kind_codes_id == rowid;
                 END''')
@@ -628,44 +689,45 @@ class Database(object):
             return
 
         c = self._conn.cursor()
-        by_files = defaultdict(list)
-        count_kind_codes = Counter()
+        files = set()
+        kind_codes = set()
         for nut in nuts:
-            k = nut.file_name, nut.file_format, nut.file_mtime
-            by_files[k].append(nut)
-            count_kind_codes[nut.kind, nut.codes] += 1
+            files.add((
+                nut.file_name,
+                nut.file_format,
+                nut.file_mtime,
+                nut.file_size))
+            kind_codes.add((nut.kind, nut.codes))
 
         c.executemany(
-            'INSERT OR IGNORE INTO kind_codes VALUES (?,?,0)',
-            [kc for kc in count_kind_codes])
+            'INSERT OR IGNORE INTO files VALUES (?,?,?,?)', files)
+
+        c.executemany(
+            '''UPDATE files SET 
+                file_format = ?, file_mtime = ?, file_size = ?
+                WHERE file_name == ?''', 
+                ((x[1], x[2], x[3], x[0]) for x in files))
+
+        c.executemany(
+            'INSERT OR IGNORE INTO kind_codes VALUES (?,?)', kind_codes)
 
         c.executemany(
             '''
-                UPDATE kind_codes
-                SET count = count + ?
-                WHERE kind == ? AND codes == ?
+                INSERT INTO nuts VALUES
+                    ((
+                        SELECT rowid FROM files
+                        WHERE file_name == ?
+                     ),?,?,
+                     (
+                        SELECT rowid FROM kind_codes
+                        WHERE kind == ? AND codes == ?
+                     ), ?,?,?,?,?,?)
             ''',
-            [(inc, kind, codes) for (kind, codes), inc
-             in count_kind_codes.items()])
-
-        for k, file_nuts in iitems(by_files):
-            c.execute('DELETE FROM files WHERE file_name = ?', k[0:1])
-            c.execute('INSERT INTO files VALUES (?,?,?)', k)
-            file_id = c.lastrowid
-
-            c.executemany(
-                '''
-                    INSERT INTO nuts VALUES
-                        (?,?,?, (
-                            SELECT rowid FROM kind_codes
-                            WHERE kind == ? AND codes == ?
-                         ), ?,?,?,?,?,?)
-                ''',
-                [(file_id, nut.file_segment, nut.file_element,
-                  nut.kind, nut.codes,
-                  nut.tmin_seconds, nut.tmin_offset,
-                  nut.tmax_seconds, nut.tmax_offset,
-                  nut.deltat, nut.kscale) for nut in file_nuts])
+            ((nut.file_name, nut.file_segment, nut.file_element,
+              nut.kind, nut.codes,
+              nut.tmin_seconds, nut.tmin_offset,
+              nut.tmax_seconds, nut.tmax_offset,
+              nut.deltat, nut.kscale) for nut in nuts))
 
         self._need_commit = True
         c.close()
@@ -676,6 +738,7 @@ class Database(object):
                 files.file_name,
                 files.file_format,
                 files.file_mtime,
+                files.file_size,
                 nuts.file_segment,
                 nuts.file_element,
                 kind_codes.kind,
@@ -699,6 +762,7 @@ class Database(object):
                 files.file_name,
                 files.file_format,
                 files.file_mtime,
+                files.file_size,
                 nuts.file_segment,
                 nuts.file_element,
                 kind_codes.kind,
@@ -736,22 +800,22 @@ class Database(object):
 
         del selection
 
-    def get_mtime(self, filename):
-        sql = '''
-            SELECT file_mtime
-            FROM files
-            WHERE file_name = ?'''
+    def get_file_stats(self, filenames):
+        if isinstance(filenames, str):
+            sql = '''
+                SELECT file_mtime, file.file_size
+                FROM files
+                WHERE file_name = ?'''
 
-        for row in self._conn.execute(sql, (filename,)):
-            return row[0]
+            for row in self._conn.execute(sql, (filenames,)):
+                return row
 
-        return None
-
-    def get_mtimes(self, filenames):
-        selection = self.new_selection(filenames)
-        mtimes = selection.get_mtimes()
-        del selection
-        return mtimes
+            return None
+        else:
+            selection = self.new_selection(filenames)
+            stats = selection.get_file_stats()
+            del selection
+            return stats
 
     def new_selection(self, filenames=None, state=0):
         selection = Selection(self)
@@ -770,6 +834,110 @@ class Database(object):
     def remove(self, filename):
         self._conn.execute(
             'DELETE FROM files WHERE file_name = ?', (filename,))
+
+    def _iter_codes(self, kind=None, kind_codes_count='kind_codes_count'):
+        args = []
+        sel = ''
+        if kind is not None:
+            sel = 'AND kind_codes.codes == ?'
+            args.append(kind)
+
+        sql = ('''
+            SELECT DISTINCT kind_codes.codes FROM %(kind_codes_count)s
+            INNER JOIN kind_codes
+                ON %(kind_codes_count)s.kind_codes_id
+                    == kind_codes.rowid
+            WHERE %(kind_codes_count)s.count > 0
+                ''' + sel + '''
+            ORDER BY kind_codes.codes
+        ''') % {'kind_codes_count': kind_codes_count}
+
+        for row in self._conn.execute(sql, args):
+            yield tuple(row[0].split('\0'))
+
+    def _iter_kinds(self, codes=None, kind_codes_count='kind_codes_count'):
+        args = []
+        sel = ''
+        if codes is not None:
+            sel = 'AND kind_codes.codes == ?'
+            args.append('\0'.join(codes))
+
+        sql = ('''
+            SELECT DISTINCT kind_codes.kind FROM %(kind_codes_count)s
+            INNER JOIN kind_codes
+                ON %(kind_codes_count)s.kind_codes_id
+                    == kind_codes.rowid
+            WHERE %(kind_codes_count)s.count > 0
+                ''' + sel + '''
+            ORDER BY kind_codes.kind
+        ''') % {'kind_codes_count': kind_codes_count}
+
+        for row in self._conn.execute(sql):
+            yield row[0]
+
+    def iter_kinds(self, codes=None):
+        return self._iter_kinds(codes=codes)
+
+    def iter_codes(self, kind=None):
+        return self._iter_codes(kind=kind)
+
+    def get_nfiles(self):
+        sql = '''SELECT COUNT(*) FROM files'''
+        for row in self._conn.execute(sql):
+            return row[0]
+
+    def get_nnuts(self):
+        sql = '''SELECT COUNT(*) FROM nuts'''
+        for row in self._conn.execute(sql):
+            return row[0]
+
+    def get_total_size(self):
+        sql = '''
+            SELECT SUM(files.file_size) FROM files
+        '''
+
+        for row in self._conn.execute(sql):
+            return row[0]
+
+    def get_stats(self):
+        return DatabaseStats(
+            nfiles=self.get_nfiles(),
+            nnuts=self.get_nnuts(),
+            kinds=list(self.iter_kinds()),
+            codes=list(self.iter_codes()),
+            total_size=self.get_total_size())
+
+    def __str__(self):
+        return str(self.get_stats())
+
+    def print_tables(self, stream=None):
+        if stream is None:
+            stream = sys.stdout
+
+        w = stream.write
+
+        w('\n')
+        for table in [
+                'files',
+                'nuts']:
+
+            w('-' * 64)
+            w('\n')
+            w(table)
+            w('\n')
+            w('-' * 64)
+            w('\n')
+            sql = ('SELECT rowid,* FROM %s' % table)
+            tab = []
+            for row in self._conn.execute(sql):
+                tab.append([str(x) for x in row])
+
+            widths = [max(len(x) for x in col) for col in zip(*tab)]
+            for row in tab:
+                w(' '.join(x.ljust(wid) for (x, wid) in zip(row, widths)))
+                w('\n')
+
+            w('\n')
 
 
 if False:

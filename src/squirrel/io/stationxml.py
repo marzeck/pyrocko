@@ -1,5 +1,5 @@
 import time
-from pyrocko.io.io_common import get_mtime  # noqa
+from pyrocko.io.io_common import get_stats  # noqa
 from pyrocko.squirrel import model
 
 

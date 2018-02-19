@@ -14,9 +14,9 @@ class UniqueKeyRequired(Exception):
     pass
 
 
-def get_mtime(file_name):
+def get_stats(file_name):
     try:
-        return data_mtimes[file_name]
+        return float(data_mtimes[file_name]), 0
     except KeyError:
         raise FileLoadError(file_name)
 
