@@ -76,7 +76,7 @@ class FDSNSource(Source):
         util.ensuredir(self._cache_dir)
         self._load_selection()
 
-    def get_channel_filenames(self, selection=None):
+    def get_channel_file_paths(self, selection=None):
         return [op.join(self._cache_dir, 'channels.stationxml')]
 
     def update_channel_inventory(self, selection=None):
@@ -99,7 +99,7 @@ class FDSNSource(Source):
         channel_sx = self._do_channel_query(selection)
         channel_sx.created = None  # timestamp would ruin diff
 
-        fn = self.get_channel_filenames(selection)[0]
+        fn = self.get_channel_file_paths(selection)[0]
         fn_temp = fn + '.%i.temp' % os.getpid()
         channel_sx.dump_xml(filename=fn_temp)
 
@@ -147,11 +147,11 @@ class FDSNSource(Source):
 
         return channel_sx
 
-    def _get_selection_filename(self):
+    def _get_selection_file_path(self):
         return op.join(self._cache_dir, 'selection.pickle')
 
     def _load_selection(self):
-        fn = self._get_selection_filename()
+        fn = self._get_selection_file_path()
         if op.exists(fn):
             with open(fn, 'rb') as f:
                 self._selection = pickle.load(f)
@@ -159,13 +159,13 @@ class FDSNSource(Source):
             self._selection = None
 
     def _dump_selection(self):
-        with open(self._get_selection_filename(), 'wb') as f:
+        with open(self._get_selection_file_path(), 'wb') as f:
             pickle.dump(self._selection, f)
 
     def _stale_channel_inventory(self, selection):
-        for filename in self.get_channel_filenames(selection):
+        for file_path in self.get_channel_file_paths(selection):
             try:
-                t = os.stat(filename)[8]
+                t = os.stat(file_path)[8]
                 return t < time.time() - self._noquery_age_max
             except OSError:
                 return True

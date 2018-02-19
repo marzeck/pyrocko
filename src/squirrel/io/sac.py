@@ -33,14 +33,14 @@ def nonetoempty(x):
         return x.strip()
 
 
-def iload(format, filename, segment, content):
+def iload(format, file_path, segment, content):
     assert format == 'sac'
 
     from pyrocko.io import sac
 
     load_data = 'waveform' in content
 
-    s = sac.SacFile(filename, load_data=load_data)
+    s = sac.SacFile(file_path, load_data=load_data)
 
     codes = dict(
         network=nonetoempty(s.knetwk),

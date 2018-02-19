@@ -11,13 +11,6 @@ from pyrocko.guts import Object, Int, List, String, Timestamp
 from pyrocko import config
 
 
-def iitems(d):
-    try:
-        return d.iteritems()
-    except AttributeError:
-        return d.items()
-
-
 g_databases = {}
 
 
@@ -96,21 +89,21 @@ class Selection(object):
         self._conn.execute(
             'DROP TABLE %(db)s.%(file_states)s' % self._names)
 
-    def add(self, filenames, state=0):
-        if isinstance(filenames, str):
-            filenames = [filenames]
+    def add(self, file_paths, state=0):
+        if isinstance(file_paths, str):
+            file_paths = [file_paths]
         self._conn.execute(
             '''CREATE TEMP TABLE temp.%(bulkinsert)s
-                (file_name text)
+                (file_path text)
             ''' % self._names)
 
         self._conn.executemany(
             '''INSERT INTO temp.%(bulkinsert)s VALUES (?)''' % self._names,
-            ((x,) for x in filenames))
+            ((x,) for x in file_paths))
 
         self._conn.execute(
             '''INSERT OR IGNORE INTO files
-                SELECT file_name, NULL, NULL, NULL
+                SELECT file_path, NULL, NULL, NULL
                 FROM temp.%(bulkinsert)s
             ''' % self._names)
 
@@ -120,7 +113,7 @@ class Selection(object):
                 SELECT files.rowid, ?
                 FROM temp.%(bulkinsert)s
                 INNER JOIN files
-                ON temp.%(bulkinsert)s.file_name == files.file_name
+                ON temp.%(bulkinsert)s.file_path == files.file_path
             ''' % self._names, (state,))
 
         self._conn.execute(
@@ -137,7 +130,7 @@ class Selection(object):
 
         sql = ('''
             SELECT
-                files.file_name,
+                files.file_path,
                 files.file_format,
                 files.file_mtime,
                 files.file_size,
@@ -162,19 +155,19 @@ class Selection(object):
         ''') % self._names
 
         nuts = []
-        fn = None
+        file_path = None
         for values in self._conn.execute(sql):
-            if fn is not None and values[0] != fn:
-                yield fn, nuts
+            if file_path is not None and values[0] != file_path:
+                yield file_path, nuts
                 nuts = []
 
             if values[1] is not None:
                 nuts.append(model.Nut(values_nocheck=values))
 
-            fn = values[0]
+            file_path = values[0]
 
-        if fn is not None:
-            yield fn, nuts
+        if file_path is not None:
+            yield file_path, nuts
 
     def flag_unchanged(self, check=True):
         sql = '''
@@ -191,11 +184,11 @@ class Selection(object):
         if not check:
             return
 
-        def iter_filenames_states():
+        def iter_file_states():
             sql = '''
                 SELECT
                     files.rowid,
-                    files.file_name,
+                    files.file_path,
                     files.file_format,
                     files.file_mtime,
                     files.file_size
@@ -206,12 +199,12 @@ class Selection(object):
                 ORDER BY %(db)s.%(file_states)s.rowid
             ''' % self._names
 
-            for (file_id, filename, fmt, mtime_db,
+            for (file_id, file_path, fmt, mtime_db,
                     size_db) in self._conn.execute(sql):
 
                 try:
                     mod = io.get_format_provider(fmt)
-                    file_stats = mod.get_stats(filename)
+                    file_stats = mod.get_stats(file_path)
                 except FileLoadError:
                     yield 0, file_id
                     continue
@@ -230,7 +223,7 @@ class Selection(object):
             WHERE file_id = ?
         ''' % self._names
 
-        self._conn.executemany(sql, iter_filenames_states())
+        self._conn.executemany(sql, iter_file_states())
 
 
 class SquirrelStats(Object):
@@ -362,11 +355,11 @@ class Squirrel(Selection):
 
             w('\n')
 
-    def add(self, filenames, kinds=None, format='detect', check=True):
+    def add(self, file_paths, kinds=None, format='detect', check=True):
         if isinstance(kinds, str):
             kinds = (kinds,)
 
-        Selection.add(self, filenames)
+        Selection.add(self, file_paths)
         self._load(format, check)
         self._update_nuts(kinds)
 
@@ -435,7 +428,7 @@ class Squirrel(Selection):
 
         sql = ('''
             SELECT
-                files.file_name,
+                files.file_path,
                 files.file_format,
                 files.file_mtime,
                 files.file_size,
@@ -469,7 +462,7 @@ class Squirrel(Selection):
 
         sql = '''
             SELECT
-                files.file_name,
+                files.file_path,
                 files.file_format,
                 files.file_mtime,
                 files.file_size,
@@ -522,8 +515,8 @@ class Squirrel(Selection):
     def update_channel_inventory(self, selection):
         for source in self._sources:
             source.update_channel_inventory(selection)
-            for fn in source.get_channel_filenames(selection):
-                self.add(fn)
+            for file_path in source.get_channel_file_paths(selection):
+                self.add(file_path)
 
     def get_nfiles(self):
         sql = '''SELECT COUNT(*) FROM %(db)s.%(file_states)s''' % self._names
@@ -613,7 +606,7 @@ class Database(object):
 
         c.execute(
             '''CREATE TABLE IF NOT EXISTS files (
-                file_name text PRIMARY KEY,
+                file_path text PRIMARY KEY,
                 file_format text,
                 file_mtime float,
                 file_size integer)''')
@@ -693,7 +686,7 @@ class Database(object):
         kind_codes = set()
         for nut in nuts:
             files.add((
-                nut.file_name,
+                nut.file_path,
                 nut.file_format,
                 nut.file_mtime,
                 nut.file_size))
@@ -703,10 +696,11 @@ class Database(object):
             'INSERT OR IGNORE INTO files VALUES (?,?,?,?)', files)
 
         c.executemany(
-            '''UPDATE files SET 
+            '''UPDATE files SET
                 file_format = ?, file_mtime = ?, file_size = ?
-                WHERE file_name == ?''', 
-                ((x[1], x[2], x[3], x[0]) for x in files))
+                WHERE file_path == ?
+            ''',
+            ((x[1], x[2], x[3], x[0]) for x in files))
 
         c.executemany(
             'INSERT OR IGNORE INTO kind_codes VALUES (?,?)', kind_codes)
@@ -716,14 +710,14 @@ class Database(object):
                 INSERT INTO nuts VALUES
                     ((
                         SELECT rowid FROM files
-                        WHERE file_name == ?
+                        WHERE file_path == ?
                      ),?,?,
                      (
                         SELECT rowid FROM kind_codes
                         WHERE kind == ? AND codes == ?
                      ), ?,?,?,?,?,?)
             ''',
-            ((nut.file_name, nut.file_segment, nut.file_element,
+            ((nut.file_path, nut.file_segment, nut.file_element,
               nut.kind, nut.codes,
               nut.tmin_seconds, nut.tmin_offset,
               nut.tmax_seconds, nut.tmax_offset,
@@ -732,10 +726,10 @@ class Database(object):
         self._need_commit = True
         c.close()
 
-    def undig(self, filename):
+    def undig(self, file_path):
         sql = '''
             SELECT
-                files.file_name,
+                files.file_path,
                 files.file_format,
                 files.file_mtime,
                 files.file_size,
@@ -751,15 +745,15 @@ class Database(object):
             FROM files
             INNER JOIN nuts ON files.rowid = nuts.file_id
             INNER JOIN kind_codes ON nuts.kind_codes_id == kind_codes.rowid
-            WHERE file_name == ?'''
+            WHERE file_path == ?'''
 
         return [model.Nut(values_nocheck=row)
-                for row in self._conn.execute(sql, (filename,))]
+                for row in self._conn.execute(sql, (file_path,))]
 
     def undig_all(self):
         sql = '''
             SELECT
-                files.file_name,
+                files.file_path,
                 files.file_format,
                 files.file_mtime,
                 files.file_size,
@@ -778,49 +772,49 @@ class Database(object):
         '''
 
         nuts = []
-        fn = None
+        file_path = None
         for values in self._conn.execute(sql):
-            if fn is not None and values[0] != fn:
-                yield fn, nuts
+            if file_path is not None and values[0] != file_path:
+                yield file_path, nuts
                 nuts = []
 
             if values[1] is not None:
                 nuts.append(model.Nut(values_nocheck=values))
 
-            fn = values[0]
+            file_path = values[0]
 
-        if fn is not None:
-            yield fn, nuts
+        if file_path is not None:
+            yield file_path, nuts
 
-    def undig_many(self, filenames):
-        selection = self.new_selection(filenames)
+    def undig_many(self, file_paths):
+        selection = self.new_selection(file_paths)
 
-        for fn, nuts in selection.undig_grouped():
-            yield fn, nuts
+        for file_path, nuts in selection.undig_grouped():
+            yield file_path, nuts
 
         del selection
 
-    def get_file_stats(self, filenames):
-        if isinstance(filenames, str):
+    def get_file_stats(self, file_paths):
+        if isinstance(file_paths, str):
             sql = '''
                 SELECT file_mtime, file.file_size
                 FROM files
-                WHERE file_name = ?'''
+                WHERE file_path = ?'''
 
-            for row in self._conn.execute(sql, (filenames,)):
+            for row in self._conn.execute(sql, (file_paths,)):
                 return row
 
             return None
         else:
-            selection = self.new_selection(filenames)
+            selection = self.new_selection(file_paths)
             stats = selection.get_file_stats()
             del selection
             return stats
 
-    def new_selection(self, filenames=None, state=0):
+    def new_selection(self, file_paths=None, state=0):
         selection = Selection(self)
-        if filenames:
-            selection.add(filenames, state=state)
+        if file_paths:
+            selection.add(file_paths, state=state)
         return selection
 
     def commit(self):
@@ -831,9 +825,9 @@ class Database(object):
     def undig_content(self, nut):
         return None
 
-    def remove(self, filename):
+    def remove(self, file_path):
         self._conn.execute(
-            'DELETE FROM files WHERE file_name = ?', (filename,))
+            'DELETE FROM files WHERE file_path = ?', (file_path,))
 
     def _iter_codes(self, kind=None, kind_codes_count='kind_codes_count'):
         args = []

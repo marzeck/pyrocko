@@ -6,6 +6,7 @@ import unittest
 import tempfile
 import shutil
 import os.path as op
+from collections import defaultdict
 
 import numpy as num
 
@@ -112,10 +113,10 @@ class SquirrelTestCase(unittest.TestCase):
 
     def test_dig_undig(self):
         nuts = []
-        for file_name in 'abcde':
+        for file_path in 'abcde':
             for file_element in range(2):
                 nuts.append(squirrel.Nut(
-                    file_name=file_name,
+                    file_path=file_path,
                     file_format='test',
                     file_segment=0,
                     file_element=file_element,
@@ -124,33 +125,31 @@ class SquirrelTestCase(unittest.TestCase):
         database = squirrel.Database()
         database.dig(nuts)
 
-        data = []
-        for file_name in 'abcde':
-            nuts2 = database.undig(file_name)
+        data = defaultdict(list)
+        for file_path in 'abcde':
+            nuts2 = database.undig(file_path)
             for nut in nuts2:
-                data.append((nut.file_name, nut.file_element))
+                data[nut.file_path].append(nut.file_element)
 
-        self.assertEqual(
-            [(file_name, i) for file_name in 'abcde' for i in range(2)],
-            data)
+        for file_path in 'abcde':
+            self.assertEqual([0, 1], sorted(data[file_path]))
 
-        data = []
-        for fn, nuts2 in database.undig_many(filenames=['a', 'c']):
+        data = defaultdict(list)
+        for file_path in 'ac':
+            nuts2 = database.undig(file_path)
             for nut in nuts2:
-                data.append((nut.file_name, nut.file_element))
+                data[nut.file_path].append(nut.file_element)
 
-        self.assertEqual(
-            [(file_name, i) for file_name in 'ac' for i in range(2)],
-            data)
+        for file_path in 'ac':
+            self.assertEqual([0, 1], sorted(data[file_path]))
 
-        data = []
+        data = defaultdict(list)
         for fn, nuts3 in database.undig_all():
             for nut in nuts3:
-                data.append((nut.file_name, nut.file_element))
+                data[nut.file_path].append(nut.file_element)
 
-        self.assertEqual(
-            [(file_name, i) for file_name in 'abcde' for i in range(2)],
-            data)
+        for file_path in 'abcde':
+            self.assertEqual([0, 1], sorted(data[file_path]))
 
     def test_add_update(self):
 
@@ -236,14 +235,14 @@ class SquirrelTestCase(unittest.TestCase):
 
         all_nuts = []
         for it in range(nt):
-            file_name = 'virtual:file_%i' % it
+            file_path = 'virtual:file_%i' % it
             tmin = txs[it]
             tmax = txs[it+1]
             tmin_seconds, tmin_offset = squirrel.model.tsplit(tmin)
             tmax_seconds, tmax_offset = squirrel.model.tsplit(tmax)
             for file_element in range(ne):
                 all_nuts.append(squirrel.Nut(
-                    file_name=file_name,
+                    file_path=file_path,
                     file_format='virtual',
                     file_segment=0,
                     file_element=file_element,
@@ -256,13 +255,13 @@ class SquirrelTestCase(unittest.TestCase):
 
         squirrel.io.virtual.add_nuts(all_nuts)
 
-        dbfilename = os.path.join(self.tempdir, 'squirrel_benchmark_chop.db')
-        if os.path.exists(dbfilename):
-            os.unlink(dbfilename)
+        db_file_path = os.path.join(self.tempdir, 'squirrel_benchmark_chop.db')
+        if os.path.exists(db_file_path):
+            os.unlink(db_file_path)
 
-        filldb = not os.path.exists(dbfilename)
+        filldb = not os.path.exists(db_file_path)
 
-        database = squirrel.Database(dbfilename)
+        database = squirrel.Database(db_file_path)
 
         bench = common.Benchmark('test_chop (%i x %i)' % (nt, ne))
 
@@ -356,10 +355,10 @@ class SquirrelTestCase(unittest.TestCase):
 
             assert ii == len(fns)
 
-        dbfilename = op.join(self.tempdir, 'db.squirrel')
-        if os.path.exists(dbfilename):
-            os.unlink(dbfilename)
-        database = squirrel.Database(dbfilename)
+        db_file_path = op.join(self.tempdir, 'db.squirrel')
+        if os.path.exists(db_file_path):
+            os.unlink(db_file_path)
+        database = squirrel.Database(db_file_path)
 
         with bench.run('iload, with db'):
             ii = 0

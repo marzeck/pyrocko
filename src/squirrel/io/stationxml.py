@@ -17,7 +17,7 @@ def detect(first512):
     return None
 
 
-def iload(format, filename, segment, content):
+def iload(format, file_path, segment, content):
     assert format == 'stationxml'
 
     far_future = time.time() + 20*Y
@@ -25,7 +25,7 @@ def iload(format, filename, segment, content):
     from pyrocko.fdsn import station as fdsn_station
     value_or_none = fdsn_station.value_or_none
 
-    sx = fdsn_station.load_xml(filename=filename)
+    sx = fdsn_station.load_xml(filename=file_path)
 
     inut = 0
 

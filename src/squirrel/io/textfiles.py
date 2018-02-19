@@ -48,11 +48,11 @@ def float_or_none(s):
         return float(s)
 
 
-def iload(format, filename, segment, content):
+def iload(format, file_path, segment, content):
     inut = 0
     tmin = None
     tmax = None
-    with open(filename, 'r') as f:
+    with open(file_path, 'r') as f:
 
         have_station = False
         for (iline, line) in enumerate(f):
@@ -134,4 +134,4 @@ def iload(format, filename, segment, content):
             except Exception as e:
                 logger.warning(
                     'skipping invalid station/channel definition: %s '
-                    '(line: %i, file: %s' % (str(e), iline, filename))
+                    '(line: %i, file: %s' % (str(e), iline, file_path))

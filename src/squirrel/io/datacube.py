@@ -15,14 +15,14 @@ def detect(first512):
         return None
 
 
-def iload(format, filename, segment, content):
+def iload(format, file_path, segment, content):
     assert format == 'datacube'
 
     from pyrocko import datacube
 
     load_data = 'waveform' in content
 
-    for itr, tr in enumerate(datacube.iload(filename, load_data=load_data)):
+    for itr, tr in enumerate(datacube.iload(file_path, load_data=load_data)):
 
         nut = model.make_waveform_nut(
             file_segment=0,

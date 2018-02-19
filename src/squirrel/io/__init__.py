@@ -30,9 +30,9 @@ update_format_providers()
 
 
 class FormatDetectionFailed(FileLoadError):
-    def __init__(self, filename):
+    def __init__(self, file_path):
         FileLoadError.__init__(
-            self, 'format detection failed for file: %s' % filename)
+            self, 'format detection failed for file: %s' % file_path)
 
 
 class UnknownFormat(Exception):
@@ -48,18 +48,18 @@ def get_format_provider(fmt):
         raise UnknownFormat(fmt)
 
 
-def detect_format(filename):
+def detect_format(file_path):
     '''Determine file type from first 512 bytes.'''
 
-    if filename.startswith('virtual:'):
+    if file_path.startswith('virtual:'):
         return 'virtual'
 
     try:
-        with open(filename, 'rb') as f:
+        with open(file_path, 'rb') as f:
             data = f.read(512)
 
     except OSError as e:
-        raise FormatDetectionFailed(filename)
+        raise FormatDetectionFailed(file_path)
 
     fmt = None
     for mod in backend_modules:
@@ -67,11 +67,11 @@ def detect_format(filename):
         if fmt is not None:
             return fmt
 
-    raise FormatDetectionFailed(filename)
+    raise FormatDetectionFailed(file_path)
 
 
 def iload(
-        filenames,
+        file_paths,
         segment=None,
         format='detect',
         database=None,
@@ -83,7 +83,7 @@ def iload(
     '''
     Iteratively load content or index from files.
 
-    :param filenames: iterator yielding filenames to load from or
+    :param file_paths: iterator yielding file names to load from or
         :py:class:`pyrocko.squirrel.Selection` object
     :param segment: ``str`` file-specific segment identifier (con only be used
         when loading from a single file.
@@ -104,16 +104,16 @@ def iload(
     n_load = 0
     selection = None
 
-    if isinstance(filenames, (str, newstr)):
-        filenames = [filenames]
+    if isinstance(file_paths, (str, newstr)):
+        file_paths = [file_paths]
     else:
         if segment is not None:
             raise TypeError(
                 'iload: segment argument can only be used when loading from '
                 'a single file')
 
-        if isinstance(filenames, Selection):
-            selection = filenames
+        if isinstance(file_paths, Selection):
+            selection = file_paths
             if database is not None:
                 raise TypeError(
                     'iload: database argument must be None when called with a '
@@ -124,7 +124,7 @@ def iload(
     temp_selection = None
     if database:
         if not selection:
-            temp_selection = database.new_selection(filenames, state=1)
+            temp_selection = database.new_selection(file_paths, state=1)
             selection = temp_selection
 
         if skip_unchanged:
@@ -138,10 +138,10 @@ def iload(
             raise TypeError(
                 'iload: skip_unchanged argument requires database')
 
-        it = ((fn, []) for fn in filenames)
+        it = ((file_path, []) for file_path in file_paths)
 
     n_files = 0
-    for filename, old_nuts in it:
+    for file_path, old_nuts in it:
         n_files += 1
         if database and commit and n_files % 1000 == 0:
             database.commit()
@@ -160,7 +160,7 @@ def iload(
 
                 if db_only_operation:
                     logger.debug('using cached information for file %s, '
-                                 % filename)
+                                 % file_path)
 
                     for nut in old_nuts:
                         if nut.kind in content:
@@ -175,17 +175,17 @@ def iload(
                 if old_nuts and not old_nuts[0].file_modified():
                     format_this = old_nuts[0].file_format
                 else:
-                    format_this = detect_format(filename)
+                    format_this = detect_format(file_path)
             else:
                 format_this = format
 
             mod = get_format_provider(format_this)
-            mtime, size = mod.get_stats(filename)
+            mtime, size = mod.get_stats(file_path)
 
-            logger.debug('reading file %s' % filename)
+            logger.debug('reading file %s' % file_path)
             nuts = []
-            for nut in mod.iload(format_this, filename, segment, content):
-                nut.file_name = filename
+            for nut in mod.iload(format_this, file_path, segment, content):
+                nut.file_path = file_path
                 nut.file_format = format_this
                 nut.file_mtime = mtime
                 nut.file_size = size
@@ -196,18 +196,18 @@ def iload(
 
             if database and nuts != old_nuts:
                 if segment is not None:
-                    nuts = mod.iload(format_this, filename, None, [])
+                    nuts = mod.iload(format_this, file_path, None, [])
                     for nut in nuts:
-                        nut.file_name = filename
+                        nut.file_path = file_path
                         nut.file_format = format_this
                         nut.file_mtime = mtime
 
                 database.dig(nuts)
 
         except FileLoadError:
-            logger.error('an error occured while reading file: %s' % filename)
+            logger.error('an error occured while reading file: %s' % file_path)
             if database:
-                database.remove(filename)
+                database.remove(file_path)
 
 
     if database:

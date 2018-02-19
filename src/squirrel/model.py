@@ -147,7 +147,7 @@ class Event(Content):
 
 
 class Nut(Object):
-    file_name = String.T(optional=True)
+    file_path = String.T(optional=True)
     file_format = String.T(optional=True)
     file_mtime = Timestamp.T(optional=True)
     file_size = Int.T(optional=True)
@@ -171,7 +171,7 @@ class Nut(Object):
 
     def __init__(
             self,
-            file_name=None,
+            file_path=None,
             file_format=None,
             file_mtime=None,
             file_size=None,
@@ -190,7 +190,7 @@ class Nut(Object):
             values_nocheck=None):
 
         if values_nocheck is not None:
-            (self.file_name, self.file_format, self.file_mtime, self.file_size,
+            (self.file_path, self.file_format, self.file_mtime, self.file_size,
              self.file_segment, self.file_element,
              self.kind, self.codes,
              self.tmin_seconds, self.tmin_offset,
@@ -212,7 +212,7 @@ class Nut(Object):
             self.tmax_seconds = int_or_none(tmax_seconds)
             self.tmax_offset = float(tmax_offset)
             self.deltat = float_or_none(deltat)
-            self.file_name = str_or_none(file_name)
+            self.file_path = str_or_none(file_path)
             self.file_segment = int_or_none(file_segment)
             self.file_element = int_or_none(file_element)
             self.file_format = str_or_none(file_format)
@@ -233,7 +233,7 @@ class Nut(Object):
         return io.get_format_provider(self.file_format)
 
     def file_modified(self):
-        return self.get_io_backend().get_stats(self.file_name) \
+        return self.get_io_backend().get_stats(self.file_path) \
             != (self.file_mtime, self.file_size)
 
     @property
