@@ -722,6 +722,8 @@ class EventParameters(Object):
 
 class QuakeML(Object):
     xmltagname = 'quakeml'
+    xmlns = 'http://quakeml.org/xmlns/quakeml/1.2'
+
     event_parameters = EventParameters.T(optional=True)
 
     def get_pyrocko_events(self):
@@ -741,5 +743,4 @@ class QuakeML(Object):
 
         return QuakeML(event_parameters=EventParameters(
             public_id='quakeml:test/test',
-            event_list=qevents)) 
-
+            event_list=qevents))

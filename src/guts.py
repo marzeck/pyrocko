@@ -540,6 +540,10 @@ class ObjectMetaClass(type):
                 T.cls = cls
 
             T.dummy_cls = cls
+            if hasattr(cls, 'xmlns'):
+                T.xmlns = cls.xmlns
+            else:
+                T.xmlns = None
 
             if hasattr(cls, 'xmltagname'):
                 T.xmltagname = cls.xmltagname
@@ -682,8 +686,12 @@ class Object(with_metaclass(ObjectMetaClass, object)):
     def dump(self, stream=None, filename=None, header=False):
         return dump(self, stream=stream, filename=filename, header=header)
 
-    def dump_xml(self, stream=None, filename=None, header=False):
-        return dump_xml(self, stream=stream, filename=filename, header=header)
+    def dump_xml(
+            self, stream=None, filename=None, header=False, namespaces=None):
+
+        return dump_xml(
+            self, stream=stream, filename=filename, header=header,
+            namespaces=namespaces)
 
     @classmethod
     def load(cls, stream=None, filename=None, string=None):
@@ -1461,7 +1469,9 @@ def _dump_xml_header(stream, banner=None):
         stream.write(enc(u'<!-- %s -->\n' % banner))
 
 
-def _dump_xml(obj, stream, depth=0, xmltagname=None, header=False):
+def _dump_xml(obj, stream, depth=0, xmltagname=None, header=False,
+              namespaces=None):
+
     from xml.sax.saxutils import escape, quoteattr
 
     if not getattr(stream, 'encoding', None):
@@ -1480,6 +1490,18 @@ def _dump_xml(obj, stream, depth=0, xmltagname=None, header=False):
         obj.validate(depth=1)
         attrs = []
         elems = []
+        if namespaces:
+            ns = namespaces.get(obj.T.xmlns, None)
+            if ns is not None:
+                xmltagname = ns + ':' + xmltagname
+
+        if depth == 0 and namespaces:
+            for k, v in namespaces.items():
+                if v:
+                    attrs.append(('xmlns:%s' % v, k))
+                else:
+                    attrs.append(('xmlns', k))
+
         for prop, v in obj.T.ipropvals_to_save(obj, xmlmode=True):
             if prop.xmlstyle == 'attribute':
                 assert not prop.multivalued
@@ -1513,7 +1535,8 @@ def _dump_xml(obj, stream, depth=0, xmltagname=None, header=False):
                 if k is None:
                     stream.write(enc(escape(newstr(v), {'\0': '&#00;'})))
                 else:
-                    _dump_xml(v, stream=stream, depth=depth+1, xmltagname=k)
+                    _dump_xml(v, stream=stream, depth=depth+1, xmltagname=k,
+                              namespaces=namespaces)
 
             stream.write(enc(u'%s</%s>\n' % (
                 '' if oneline else indent, xmltagname)))
