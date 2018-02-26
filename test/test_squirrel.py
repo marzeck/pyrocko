@@ -220,6 +220,14 @@ class SquirrelTestCase(unittest.TestCase):
 
         assert len(list(sq.undig_span(-10., 10.))) == 0
 
+        fns = make_files(2)
+        sq.add(fns)
+        assert sq.get_nfiles() == 1
+        assert sq.get_nnuts() == 1
+        sq.remove(fns)
+        assert sq.get_nfiles() == 0
+        assert sq.get_nnuts() == 0
+
     def benchmark_chop(self):
         bench = self.test_chop(100000, ne=10)
         print(bench)

@@ -72,9 +72,11 @@ class Selection(object):
             'bulkinsert': self.name + '_bulkinsert'}
 
         self._conn.execute(
-            '''CREATE TABLE IF NOT EXISTS %(db)s.%(file_states)s (
-                file_id integer PRIMARY KEY,
-                file_state integer)''' % self._names)
+            '''
+                CREATE TABLE IF NOT EXISTS %(db)s.%(file_states)s (
+                    file_id integer PRIMARY KEY,
+                    file_state integer)
+            ''' % self._names)
 
     def __del__(self):
         if not self._persistent:
@@ -93,24 +95,26 @@ class Selection(object):
         if isinstance(file_paths, str):
             file_paths = [file_paths]
         self._conn.execute(
-            '''CREATE TEMP TABLE temp.%(bulkinsert)s
+            '''
+                CREATE TEMP TABLE temp.%(bulkinsert)s
                 (file_path text)
             ''' % self._names)
 
         self._conn.executemany(
-            '''INSERT INTO temp.%(bulkinsert)s VALUES (?)''' % self._names,
+            'INSERT INTO temp.%(bulkinsert)s VALUES (?)' % self._names,
             ((x,) for x in file_paths))
 
         self._conn.execute(
-            '''INSERT OR IGNORE INTO files
-                SELECT file_path, NULL, NULL, NULL
+            '''
+                INSERT OR IGNORE INTO files
+                SELECT NULL, file_path, NULL, NULL, NULL
                 FROM temp.%(bulkinsert)s
             ''' % self._names)
 
         self._conn.execute(
             '''
                 INSERT OR IGNORE INTO %(db)s.%(file_states)s
-                SELECT files.rowid, ?
+                SELECT files.file_id, ?
                 FROM temp.%(bulkinsert)s
                 INNER JOIN files
                 ON temp.%(bulkinsert)s.file_path == files.file_path
@@ -118,6 +122,16 @@ class Selection(object):
 
         self._conn.execute(
             'DROP TABLE temp.%(bulkinsert)s' % self._names)
+
+    def remove(self, file_paths):
+        self._conn.executemany(
+            '''
+                DELETE FROM %(db)s.%(file_states)s
+                WHERE %(db)s.%(file_states)s.file_id ==
+                    (SELECT files.file_id
+                     FROM files
+                     WHERE files.file_path == ?)
+            ''' % self._names, ((file_path,) for file_path in file_paths))
 
     def undig_grouped(self, skip_unchanged=False):
 
@@ -145,13 +159,13 @@ class Selection(object):
                 nuts.deltat
             FROM %(db)s.%(file_states)s
             LEFT OUTER JOIN files
-                ON %(db)s.%(file_states)s.file_id = files.rowid
+                ON %(db)s.%(file_states)s.file_id = files.file_id
             LEFT OUTER JOIN nuts
-                ON files.rowid = nuts.file_id
+                ON files.file_id = nuts.file_id
             LEFT OUTER JOIN kind_codes
-                ON nuts.kind_codes_id == kind_codes.rowid
+                ON nuts.kind_codes_id == kind_codes.kind_codes_id
         ''' + where + '''
-            ORDER BY %(db)s.%(file_states)s.rowid
+            ORDER BY %(db)s.%(file_states)s.file_id
         ''') % self._names
 
         nuts = []
@@ -176,7 +190,7 @@ class Selection(object):
             WHERE (
                 SELECT file_mtime
                 FROM files
-                WHERE files.rowid == %(db)s.%(file_states)s.file_id) IS NULL
+                WHERE files.file_id == %(db)s.%(file_states)s.file_id) IS NULL
         ''' % self._names
 
         self._conn.execute(sql)
@@ -187,16 +201,16 @@ class Selection(object):
         def iter_file_states():
             sql = '''
                 SELECT
-                    files.rowid,
+                    files.file_id,
                     files.file_path,
                     files.file_format,
                     files.file_mtime,
                     files.file_size
                 FROM %(db)s.%(file_states)s
                 INNER JOIN files
-                    ON %(db)s.%(file_states)s.file_id == files.rowid
+                    ON %(db)s.%(file_states)s.file_id == files.file_id
                 WHERE %(db)s.%(file_states)s.file_state != 0
-                ORDER BY %(db)s.%(file_states)s.rowid
+                ORDER BY %(db)s.%(file_states)s.file_id
             ''' % self._names
 
             for (file_id, file_path, fmt, mtime_db,
@@ -247,54 +261,89 @@ class Squirrel(Selection):
             'kind_codes_count': self.name + '_kind_codes_count'})
 
         c.execute(
-            '''CREATE TABLE IF NOT EXISTS %(db)s.%(nuts)s (
-                file_id integer,
-                file_segment integer,
-                file_element integer,
-                kind_codes_id integer,
-                tmin_seconds integer,
-                tmin_offset float,
-                tmax_seconds integer,
-                tmax_offset float,
-                deltat float,
-                kscale integer,
-                PRIMARY KEY (file_id, file_segment, file_element))
+            '''
+                CREATE TABLE IF NOT EXISTS %(db)s.%(nuts)s (
+                    nut_id integer PRIMARY KEY,
+                    file_id integer,
+                    file_segment integer,
+                    file_element integer,
+                    kind_codes_id integer,
+                    tmin_seconds integer,
+                    tmin_offset float,
+                    tmax_seconds integer,
+                    tmax_offset float,
+                    deltat float,
+                    kscale integer)
             ''' % self._names)
 
         c.execute(
-            '''CREATE TABLE IF NOT EXISTS %(db)s.%(kind_codes_count)s (
-                kind_codes_id integer PRIMARY KEY,
-                count integer)''' % self._names)
+            '''
+                CREATE UNIQUE INDEX IF NOT EXISTS %(db)s.%(nuts)s_file_element
+                    ON %(nuts)s (file_id, file_segment, file_element)
+            ''' % self._names)
 
         c.execute(
-            '''CREATE INDEX IF NOT EXISTS %(db)s.%(nuts)s_index_tmin_seconds
+            '''
+                CREATE TABLE IF NOT EXISTS %(db)s.%(kind_codes_count)s (
+                    kind_codes_id integer PRIMARY KEY,
+                    count integer)
+            ''' % self._names)
+
+        c.execute(
+            '''
+                CREATE INDEX IF NOT EXISTS %(db)s.%(nuts)s_index_file_id
+                ON %(nuts)s (file_id)
+            ''' % self._names)
+
+        c.execute(
+            '''
+                CREATE INDEX IF NOT EXISTS %(db)s.%(nuts)s_index_tmin_seconds
                 ON %(nuts)s (tmin_seconds)
             ''' % self._names)
 
         c.execute(
-            '''CREATE INDEX IF NOT EXISTS %(db)s.%(nuts)s_index_tmax_seconds
-                ON %(nuts)s (tmax_seconds)''' % self._names)
+            '''
+                CREATE INDEX IF NOT EXISTS %(db)s.%(nuts)s_index_tmax_seconds
+                ON %(nuts)s (tmax_seconds)
+            ''' % self._names)
 
         c.execute(
-            '''CREATE INDEX IF NOT EXISTS %(db)s.%(nuts)s_index_kscale
-                ON %(nuts)s (kscale, tmin_seconds)''' % self._names)
+            '''
+                CREATE INDEX IF NOT EXISTS %(db)s.%(nuts)s_index_kscale
+                ON %(nuts)s (kscale, tmin_seconds)
+            ''' % self._names)
 
         c.execute(
-            '''CREATE TRIGGER IF NOT EXISTS %(db)s.%(nuts)s_delete_nuts
+            '''
+                CREATE TRIGGER IF NOT EXISTS %(db)s.%(nuts)s_delete_nuts
                 BEFORE DELETE ON main.files FOR EACH ROW
                 BEGIN
-                  DELETE FROM %(nuts)s where file_id == old.rowid;
-                END''' % self._names)
+                  DELETE FROM %(nuts)s WHERE file_id == old.file_id;
+                END
+            ''' % self._names)
 
         c.execute(
-            '''CREATE TRIGGER IF NOT EXISTS %(db)s.%(nuts)s_delete_nuts2
+            '''
+                CREATE TRIGGER IF NOT EXISTS %(db)s.%(nuts)s_delete_nuts2
                 BEFORE UPDATE ON main.files FOR EACH ROW
                 BEGIN
-                  DELETE FROM %(nuts)s where file_id == old.rowid;
-                END''' % self._names)
+                  DELETE FROM %(nuts)s WHERE file_id == old.file_id;
+                END
+            ''' % self._names)
 
         c.execute(
-            '''CREATE TRIGGER IF NOT EXISTS %(db)s.%(nuts)s_inc_kind_codes
+            '''
+                CREATE TRIGGER IF NOT EXISTS
+                    %(db)s.%(file_states)s_delete_files
+                BEFORE DELETE ON %(db)s.%(file_states)s FOR EACH ROW
+                BEGIN
+                    DELETE FROM %(nuts)s WHERE file_id == old.file_id;
+                END
+            ''' % self._names)
+
+        c.execute(
+            '''
+                CREATE TRIGGER IF NOT EXISTS %(db)s.%(nuts)s_inc_kind_codes
                 BEFORE INSERT ON %(nuts)s FOR EACH ROW
                 BEGIN
                     INSERT OR IGNORE INTO %(kind_codes_count)s VALUES
@@ -303,17 +352,20 @@ class Squirrel(Selection):
                     SET count = count + 1
                     WHERE new.kind_codes_id
                         == %(kind_codes_count)s.kind_codes_id;
-                END''' % self._names)
+                END
+            ''' % self._names)
 
         c.execute(
-            '''CREATE TRIGGER IF NOT EXISTS %(db)s.%(nuts)s_dec_kind_codes
+            '''
+                CREATE TRIGGER IF NOT EXISTS %(db)s.%(nuts)s_dec_kind_codes
                 BEFORE DELETE ON %(nuts)s FOR EACH ROW
                 BEGIN
                     UPDATE %(kind_codes_count)s
                     SET count = count - 1
                     WHERE old.kind_codes_id
                         == %(kind_codes_count)s.kind_codes_id;
-                END''' % self._names)
+                END
+            ''' % self._names)
 
     def delete(self):
         self._conn.execute(
@@ -381,7 +433,8 @@ class Squirrel(Selection):
             args.append(kinds)
 
         c.execute((
-            '''INSERT INTO %(db)s.%(nuts)s
+            '''
+                INSERT INTO %(db)s.%(nuts)s
                 SELECT nuts.* FROM %(db)s.%(file_states)s
                 INNER JOIN nuts
                     ON %(db)s.%(file_states)s.file_id == nuts.file_id
@@ -390,8 +443,8 @@ class Squirrel(Selection):
 
         c.execute(
             '''
-            UPDATE %(db)s.%(file_states)s
-            SET file_state = 2
+                UPDATE %(db)s.%(file_states)s
+                SET file_state = 2
             ''' % self._names)
 
     def add_fdsn_site(self, site):
@@ -443,9 +496,9 @@ class Squirrel(Selection):
                 %(db)s.%(nuts)s.deltat
             FROM files
             INNER JOIN %(db)s.%(nuts)s
-                ON files.rowid == %(db)s.%(nuts)s.file_id
+                ON files.file_id == %(db)s.%(nuts)s.file_id
             INNER JOIN kind_codes
-                ON %(db)s.%(nuts)s.kind_codes_id == kind_codes.rowid
+                ON %(db)s.%(nuts)s.kind_codes_id == kind_codes.kind_codes_id
             WHERE ( ''' + ' OR '.join(tmin_cond) + ''')
                 AND %(db)s.%(nuts)s.tmax_seconds >= ?
         ''') % self._names
@@ -477,9 +530,9 @@ class Squirrel(Selection):
                 %(db)s.%(nuts)s.deltat
             FROM files
             INNER JOIN %(db)s.%(nuts)s
-                ON files.rowid == %(db)s.%(nuts)s.file_id
+                ON files.file_id == %(db)s.%(nuts)s.file_id
             INNER JOIN kind_codes
-                ON %(db)s.%(nuts)s.kind_codes_id == kind_codes.rowid
+                ON %(db)s.%(nuts)s.kind_codes_id == kind_codes.kind_codes_id
             WHERE %(db)s.%(nuts)s.tmax_seconds >= ?
                 AND %(db)s.%(nuts)s.tmin_seconds <= ?
         ''' % self._names
@@ -532,7 +585,7 @@ class Squirrel(Selection):
         sql = '''
             SELECT SUM(files.file_size) FROM %(db)s.%(file_states)s
             INNER JOIN files
-                ON %(db)s.%(file_states)s.file_id = files.rowid
+                ON %(db)s.%(file_states)s.file_id = files.file_id
         ''' % self._names
 
         for row in self._conn.execute(sql):
@@ -605,74 +658,111 @@ class Database(object):
             '''PRAGMA recursive_triggers = true''')
 
         c.execute(
-            '''CREATE TABLE IF NOT EXISTS files (
-                file_path text PRIMARY KEY,
-                file_format text,
-                file_mtime float,
-                file_size integer)''')
+            '''
+                CREATE TABLE IF NOT EXISTS files (
+                    file_id integer PRIMARY KEY,
+                    file_path text,
+                    file_format text,
+                    file_mtime float,
+                    file_size integer)
+            ''')
 
         c.execute(
-            '''CREATE TABLE IF NOT EXISTS nuts (
-                file_id integer,
-                file_segment integer,
-                file_element integer,
-                kind_codes_id text,
-                tmin_seconds integer,
-                tmin_offset float,
-                tmax_seconds integer,
-                tmax_offset float,
-                deltat float,
-                kscale integer,
-                PRIMARY KEY (file_id, file_segment, file_element))''')
+            '''
+                CREATE UNIQUE INDEX IF NOT EXISTS index_files_file_path
+                ON files (file_path)
+            ''')
 
         c.execute(
-            '''CREATE TABLE IF NOT EXISTS kind_codes (
-                kind text,
-                codes text,
-                PRIMARY KEY (kind, codes))''')
+            '''
+                CREATE TABLE IF NOT EXISTS nuts (
+                    nut_id integer PRIMARY KEY,
+                    file_id integer,
+                    file_segment integer,
+                    file_element integer,
+                    kind_codes_id text,
+                    tmin_seconds integer,
+                    tmin_offset float,
+                    tmax_seconds integer,
+                    tmax_offset float,
+                    deltat float,
+                    kscale integer)
+            ''')
 
         c.execute(
-            '''CREATE TABLE IF NOT EXISTS kind_codes_count (
-                kind_codes_id integer PRIMARY KEY,
-                count integer)''')
+            '''
+                CREATE UNIQUE INDEX IF NOT EXISTS index_nuts_file_element
+                ON nuts (file_id, file_segment, file_element)
+            ''')
 
         c.execute(
-            '''CREATE INDEX IF NOT EXISTS index_nuts_file_id
-                ON nuts (file_id)''')
+            '''
+                CREATE TABLE IF NOT EXISTS kind_codes (
+                    kind_codes_id integer PRIMARY KEY,
+                    kind text,
+                    codes text)
+            ''')
 
         c.execute(
-            '''CREATE TRIGGER IF NOT EXISTS delete_nuts
+            '''
+                CREATE UNIQUE INDEX IF NOT EXISTS index_kind_codes
+                ON kind_codes (kind, codes)
+            ''')
+
+        c.execute(
+            '''
+                CREATE TABLE IF NOT EXISTS kind_codes_count (
+                    kind_codes_id integer PRIMARY KEY,
+                    count integer)
+            ''')
+
+        c.execute(
+            '''
+                CREATE INDEX IF NOT EXISTS index_nuts_file_id
+                ON nuts (file_id)
+            ''')
+
+        c.execute(
+            '''
+                CREATE TRIGGER IF NOT EXISTS delete_nuts_on_delete_file
                 BEFORE DELETE ON files FOR EACH ROW
                 BEGIN
-                  DELETE FROM nuts where file_id == old.rowid;
-                END''')
+                  DELETE FROM nuts where file_id == old.file_id;
+                END
+            ''')
 
         c.execute(
-            '''CREATE TRIGGER IF NOT EXISTS delete_nuts2
+            '''
+                CREATE TRIGGER IF NOT EXISTS delete_nuts_on_update_file
                 BEFORE UPDATE ON files FOR EACH ROW
                 BEGIN
-                  DELETE FROM nuts where file_id == old.rowid;
-                END''')
+                  DELETE FROM nuts where file_id == old.file_id;
+                END
+            ''')
 
         c.execute(
-            '''CREATE TRIGGER IF NOT EXISTS increment_kind_codes
+            '''
+                CREATE TRIGGER IF NOT EXISTS increment_kind_codes
                 BEFORE INSERT ON nuts FOR EACH ROW
                 BEGIN
                     INSERT OR IGNORE INTO kind_codes_count
                     VALUES (new.kind_codes_id, 0);
                     UPDATE kind_codes_count
                     SET count = count + 1
-                    WHERE new.kind_codes_id == rowid;
-                END''')
+                    WHERE new.kind_codes_id == kind_codes_id;
+                END
+            ''')
 
         c.execute(
-            '''CREATE TRIGGER IF NOT EXISTS decrement_kind_codes
+            '''
+                CREATE TRIGGER IF NOT EXISTS decrement_kind_codes
                 BEFORE DELETE ON nuts FOR EACH ROW
                 BEGIN
                     UPDATE kind_codes_count
                     SET count = count - 1
-                    WHERE old.kind_codes_id == rowid;
-                END''')
+                    WHERE old.kind_codes_id == kind_codes_id;
+                END
+            ''')
 
         self._conn.commit()
         c.close()
@@ -693,7 +783,7 @@ class Database(object):
             kind_codes.add((nut.kind, nut.codes))
 
         c.executemany(
-            'INSERT OR IGNORE INTO files VALUES (?,?,?,?)', files)
+            'INSERT OR IGNORE INTO files VALUES (NULL,?,?,?,?)', files)
 
         c.executemany(
             '''UPDATE files SET
@@ -703,17 +793,17 @@ class Database(object):
             ((x[1], x[2], x[3], x[0]) for x in files))
 
         c.executemany(
-            'INSERT OR IGNORE INTO kind_codes VALUES (?,?)', kind_codes)
+            'INSERT OR IGNORE INTO kind_codes VALUES (NULL,?,?)', kind_codes)
 
         c.executemany(
             '''
                 INSERT INTO nuts VALUES
-                    ((
-                        SELECT rowid FROM files
+                    (NULL, (
+                        SELECT file_id FROM files
                         WHERE file_path == ?
                      ),?,?,
                      (
-                        SELECT rowid FROM kind_codes
+                        SELECT kind_codes_id FROM kind_codes
                         WHERE kind == ? AND codes == ?
                      ), ?,?,?,?,?,?)
             ''',
@@ -743,9 +833,10 @@ class Database(object):
                 nuts.tmax_offset,
                 nuts.deltat
             FROM files
-            INNER JOIN nuts ON files.rowid = nuts.file_id
-            INNER JOIN kind_codes ON nuts.kind_codes_id == kind_codes.rowid
-            WHERE file_path == ?'''
+            INNER JOIN nuts ON files.file_id = nuts.file_id
+            INNER JOIN kind_codes ON nuts.kind_codes_id == kind_codes.kind_codes_id
+            WHERE file_path == ?
+        '''
 
         return [model.Nut(values_nocheck=row)
                 for row in self._conn.execute(sql, (file_path,))]
@@ -767,8 +858,8 @@ class Database(object):
                 nuts.tmax_offset,
                 nuts.deltat
             FROM files
-            INNER JOIN nuts ON files.rowid == nuts.file_id
-            INNER JOIN kind_codes ON nuts.kind_codes_id == kind_codes.rowid
+            INNER JOIN nuts ON files.file_id == nuts.file_id
+            INNER JOIN kind_codes ON nuts.kind_codes_id == kind_codes.kind_codes_id
         '''
 
         nuts = []
@@ -799,7 +890,8 @@ class Database(object):
             sql = '''
                 SELECT file_mtime, file.file_size
                 FROM files
-                WHERE file_path = ?'''
+                WHERE file_path = ?
+            '''
 
             for row in self._conn.execute(sql, (file_paths,)):
                 return row
@@ -840,7 +932,7 @@ class Database(object):
             SELECT DISTINCT kind_codes.codes FROM %(kind_codes_count)s
             INNER JOIN kind_codes
                 ON %(kind_codes_count)s.kind_codes_id
-                    == kind_codes.rowid
+                    == kind_codes.kind_codes_id
             WHERE %(kind_codes_count)s.count > 0
                 ''' + sel + '''
             ORDER BY kind_codes.codes
@@ -860,7 +952,7 @@ class Database(object):
             SELECT DISTINCT kind_codes.kind FROM %(kind_codes_count)s
             INNER JOIN kind_codes
                 ON %(kind_codes_count)s.kind_codes_id
-                    == kind_codes.rowid
+                    == kind_codes.kind_codes_id
             WHERE %(kind_codes_count)s.count > 0
                 ''' + sel + '''
             ORDER BY kind_codes.kind
