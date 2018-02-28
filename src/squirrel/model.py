@@ -233,7 +233,7 @@ class Nut(Object):
         return not (self == other)
 
     def get_io_backend(self):
-        return io.get_format_provider(self.file_format)
+        return io.get_backend(self.file_format)
 
     def file_modified(self):
         return self.get_io_backend().get_stats(self.file_path) \

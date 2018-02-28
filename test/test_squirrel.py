@@ -261,7 +261,7 @@ class SquirrelTestCase(unittest.TestCase):
                     tmax_offset=tmax_offset,
                     kind='test'))
 
-        squirrel.io.virtual.add_nuts(all_nuts)
+        squirrel.io.backends.virtual.add_nuts(all_nuts)
 
         db_file_path = os.path.join(self.tempdir, 'squirrel_benchmark_chop.db')
         if os.path.exists(db_file_path):

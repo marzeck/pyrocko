@@ -217,7 +217,7 @@ class Selection(object):
                     size_db) in self._conn.execute(sql):
 
                 try:
-                    mod = io.get_format_provider(fmt)
+                    mod = io.get_backend(fmt)
                     file_stats = mod.get_stats(file_path)
                 except FileLoadError:
                     yield 0, file_id

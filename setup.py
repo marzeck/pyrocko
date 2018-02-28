@@ -570,6 +570,7 @@ subpacknames = [
     'pyrocko.obspy_compat',
     'pyrocko.squirrel',
     'pyrocko.squirrel.io',
+    'pyrocko.squirrel.io.backends',
     'pyrocko.squirrel.client',
 ]
 
