@@ -7,7 +7,7 @@ import sqlite3
 from pyrocko.io_common import FileLoadError
 from pyrocko.squirrel import model, io
 from pyrocko.squirrel.client import fdsn
-from pyrocko.guts import Object, Int, List, String, Timestamp
+from pyrocko.guts import Object, Int, List, String, Timestamp, Dict
 from pyrocko import config
 
 
@@ -246,6 +246,7 @@ class SquirrelStats(Object):
     codes = List.T(List.T(String.T()))
     kinds = List.T(String.T())
     total_size = Int.T()
+    counts = Dict.T(String.T(), Dict.T(String.T(), Int.T()))
     tmin = Timestamp.T(optional=True)
     tmax = Timestamp.T(optional=True)
 
@@ -460,9 +461,9 @@ class Squirrel(Selection):
 
         tmin_cond = []
         args = []
-        for kscale in range(len(tscale_edges) + 1):
-            if kscale != len(tscale_edges):
-                tscale = tscale_edges[kscale]
+        for kscale in range(tscale_edges.size + 1):
+            if kscale != tscale_edges.size:
+                tscale = int(tscale_edges[kscale])
                 tmin_cond.append('''
                     (%(db)s.%(nuts)s.kscale == ?
                         AND %(db)s.%(nuts)s.tmin_seconds BETWEEN ? AND ?)
@@ -542,14 +543,22 @@ class Squirrel(Selection):
             if nut.tmin < tmax and tmin < nut.tmax:
                 yield nut
 
-    def tspan(self):
-        sql = '''SELECT MIN(tmin_seconds) FROM %(db)s.%(nuts)s''' % self._names
+    def time_span(self):
+        sql = '''
+            SELECT MIN(tmin_seconds + tmin_offset)
+            FROM %(db)s.%(nuts)s WHERE
+            tmin_seconds == (SELECT MIN(tmin_seconds) FROM %(db)s.%(nuts)s)
+        ''' % self._names
         tmin = None
         for row in self._conn.execute(sql):
             tmin = row[0]
 
+        sql = '''
+            SELECT MAX(tmax_seconds + tmax_offset)
+            FROM %(db)s.%(nuts)s WHERE
+            tmax_seconds == (SELECT MAX(tmax_seconds) FROM %(db)s.%(nuts)s)
+        ''' % self._names
         tmax = None
-        sql = '''SELECT MAX(tmax_seconds) FROM %(db)s.%(nuts)s''' % self._names
         for row in self._conn.execute(sql):
             tmax = row[0]
 
@@ -560,10 +569,34 @@ class Squirrel(Selection):
             codes=codes,
             kind_codes_count='%(db)s.%(kind_codes_count)s' % self._names)
 
-    def iter_codes(self, kinds=None):
+    def iter_codes(self, kind=None):
         return self._database._iter_codes(
-            kind=kinds,
+            kind=kind,
             kind_codes_count='%(db)s.%(kind_codes_count)s' % self._names)
+
+    def iter_counts(self, kind=None):
+        return self._database._iter_counts(
+            kind=kind,
+            kind_codes_count='%(db)s.%(kind_codes_count)s' % self._names)
+
+    def get_kinds(self, codes=None):
+        return sorted(list(self.iter_kinds(codes=codes)))
+
+    def get_codes(self, kind=None):
+        return sorted(list(self.iter_codes(kind=kind)))
+
+    def get_counts(self, kind=None):
+        d = {}
+        for (kind, codes), count in self.iter_counts():
+            if kind not in d:
+                d[kind] = {}
+
+            d[kind][codes] = count
+
+        if kind is None:
+            return d[kind]
+        else:
+            return d
 
     def update_channel_inventory(self, selection):
         for source in self._sources:
@@ -592,12 +625,16 @@ class Squirrel(Selection):
             return row[0]
 
     def get_stats(self):
+        tmin, tmax = self.time_span()
+
         return SquirrelStats(
             nfiles=self.get_nfiles(),
             nnuts=self.get_nnuts(),
-            kinds=list(self.iter_kinds()),
-            codes=list(self.iter_codes()),
-            total_size=self.get_total_size())
+            kinds=self.get_kinds(),
+            codes=self.get_codes(),
+            total_size=self.get_total_size(),
+            tmin=tmin,
+            tmax=tmax)
 
     def __str__(self):
         return str(self.get_stats())
@@ -639,6 +676,7 @@ class DatabaseStats(Object):
     codes = List.T(List.T(String.T()))
     kinds = List.T(String.T())
     total_size = Int.T()
+    counts = Dict.T(String.T(), Dict.T(String.T(), Int.T()))
 
 
 class Database(object):
@@ -834,7 +872,8 @@ class Database(object):
                 nuts.deltat
             FROM files
             INNER JOIN nuts ON files.file_id = nuts.file_id
-            INNER JOIN kind_codes ON nuts.kind_codes_id == kind_codes.kind_codes_id
+            INNER JOIN kind_codes
+                ON nuts.kind_codes_id == kind_codes.kind_codes_id
             WHERE file_path == ?
         '''
 
@@ -859,7 +898,8 @@ class Database(object):
                 nuts.deltat
             FROM files
             INNER JOIN nuts ON files.file_id == nuts.file_id
-            INNER JOIN kind_codes ON nuts.kind_codes_id == kind_codes.kind_codes_id
+            INNER JOIN kind_codes
+                ON nuts.kind_codes_id == kind_codes.kind_codes_id
         '''
 
         nuts = []
@@ -921,11 +961,34 @@ class Database(object):
         self._conn.execute(
             'DELETE FROM files WHERE file_path = ?', (file_path,))
 
+    def _iter_counts(self, kind=None, kind_codes_count='kind_codes_count'):
+        args = []
+        sel = ''
+        if kind is not None:
+            sel = 'AND kind_codes.kind == ?'
+            args.append(kind)
+
+        sql = ('''
+            SELECT
+                kind_codes.kind,
+                kind_codes.codes,
+                %(kind_codes_count)s.count
+            FROM %(kind_codes_count)s
+            INNER JOIN kind_codes
+                ON %(kind_codes_count)s.kind_codes_id
+                    == kind_codes.kind_codes_id
+            WHERE %(kind_codes_count)s.count > 0
+                ''' + sel + '''
+        ''') % {'kind_codes_count': kind_codes_count}
+
+        for kind, codes, count in self._conn.execute(sql):
+            yield (kind, tuple(codes.split('\0'))), count
+
     def _iter_codes(self, kind=None, kind_codes_count='kind_codes_count'):
         args = []
         sel = ''
         if kind is not None:
-            sel = 'AND kind_codes.codes == ?'
+            sel = 'AND kind_codes.kind == ?'
             args.append(kind)
 
         sql = ('''
@@ -967,6 +1030,28 @@ class Database(object):
     def iter_codes(self, kind=None):
         return self._iter_codes(kind=kind)
 
+    def iter_counts(self, kind=None):
+        return self._iter_counts(kind=kind)
+
+    def get_kinds(self, codes=None):
+        return list(self.iter_kinds(codes=codes))
+
+    def get_codes(self, kind=None):
+        return list(self.iter_codes(kind=kind))
+
+    def get_counts(self, kind=None):
+        d = {}
+        for (kind, codes), count in self._iter_counts():
+            if kind not in d:
+                d[kind] = {}
+
+            d[kind][codes] = count
+
+        if kind is None:
+            return d[kind]
+        else:
+            return d
+
     def get_nfiles(self):
         sql = '''SELECT COUNT(*) FROM files'''
         for row in self._conn.execute(sql):
@@ -989,8 +1074,9 @@ class Database(object):
         return DatabaseStats(
             nfiles=self.get_nfiles(),
             nnuts=self.get_nnuts(),
-            kinds=list(self.iter_kinds()),
-            codes=list(self.iter_codes()),
+            kinds=self.get_kinds(),
+            codes=self.get_codes(),
+            counts=self.get_counts(),
             total_size=self.get_total_size())
 
     def __str__(self):

@@ -177,7 +177,7 @@ class SquirrelTestCase(unittest.TestCase):
         assert sq.get_nfiles() == 1
         assert sq.get_nnuts() == 1
 
-        assert sq.tspan() == (0., 1.)
+        assert sq.time_span() == (0., 1.)
 
         f = StringIO()
         sq.print_tables(stream=f)
@@ -291,8 +291,8 @@ class SquirrelTestCase(unittest.TestCase):
                 ('virtual:file_%i' % it for it in range(nt)),
                 check=False)
 
-        with bench.run('get tspan'):
-            tmin, tmax = sq.tspan()
+        with bench.run('get time span'):
+            tmin, tmax = sq.time_span()
 
         with bench.run('get codes'):
             for codes in sq.iter_codes():
@@ -425,9 +425,27 @@ class SquirrelTestCase(unittest.TestCase):
 
             assert ii == len(fns)
 
+        with bench.run('stats'):
+            s = database.get_stats()
+            assert s.nfiles == len(fns)
+            assert s.nnuts == len(fns)
+            assert s.kinds == ['waveform']
+            for kind in s.kinds:
+                for codes in s.codes:
+                    assert s.counts[kind][codes] == len(fns) // 30
+
         with bench.run('add to squirrel'):
             sq = squirrel.Squirrel(database=database)
             sq.add(fns)
+
+        with bench.run('stats'):
+            s = database.get_stats()
+            assert s.nfiles == len(fns)
+            assert s.nnuts == len(fns)
+            assert s.kinds == ['waveform']
+            for kind in s.kinds:
+                for codes in s.codes:
+                    assert s.counts[kind][codes] == len(fns) // 30
 
         return bench
 

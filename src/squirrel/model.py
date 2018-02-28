@@ -57,6 +57,9 @@ while True:
         break
 
 
+tscale_edges = num.array(tscale_edges)
+
+
 def tscale_to_kscale(tscale):
 
     # 0 <= x < tscale_edges[1]: 0
