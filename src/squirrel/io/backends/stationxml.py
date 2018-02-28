@@ -33,7 +33,7 @@ def iload(format, file_path, segment, content):
         for station in network.station_list:
             net = network.code
             sta = station.code
-            agn = ('', 'FDSN')[net != '']
+            agn = ''
 
             tmin = station.start_date
             tmax = station.end_date

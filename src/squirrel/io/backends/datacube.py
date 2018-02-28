@@ -27,7 +27,7 @@ def iload(format, file_path, segment, content):
         nut = model.make_waveform_nut(
             file_segment=0,
             file_element=itr,
-            agency=('', 'FDSN')[tr.network != ''],
+            agency='',
             network=tr.network,
             station=tr.station,
             location=tr.location,

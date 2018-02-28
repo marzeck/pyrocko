@@ -43,12 +43,11 @@ def iload(format, file_path, segment, content):
     s = sac.SacFile(file_path, load_data=load_data)
 
     codes = dict(
+        agency='',
         network=nonetoempty(s.knetwk),
         station=nonetoempty(s.kstnm),
         location=nonetoempty(s.khole),
         channel=nonetoempty(s.kcmpnm))
-
-    codes['agency'] = ('', 'FDSN')[codes['network'] != '']
 
     tmin = s.get_ref_time() + s.b
     tmax = tmin + s.delta * (s.npts-1)

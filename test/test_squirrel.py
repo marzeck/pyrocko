@@ -111,6 +111,58 @@ class SquirrelTestCase(unittest.TestCase):
             for nut in squirrel.iload(fpath, format='nonexist'):
                 pass
 
+    def test_squirrel(self):
+        db_path = os.path.join(self.tempdir, 'test.squirrel')
+        for kinds in [None, 'waveform', ['station', 'channel']]:
+            for persistent in [None, 'my_selection1', 'my_selection2']:
+                sq = squirrel.Squirrel(database=db_path, persistent=persistent)
+                for (fn, format) in SquirrelTestCase.test_files:
+                    fpath = common.test_data_file(fn)
+                    sq.add(fpath, kinds=kinds)
+
+                s = sq.get_stats()
+                if kinds is not None:
+                    if isinstance(kinds, str):
+                        kinds_ = [kinds]
+                    else:
+                        kinds_ = kinds
+
+                    for k in sq.get_kinds():
+                        assert k in kinds_
+
+                all_codes = set()
+                for k in sq.get_kinds():
+                    for codes in sq.get_codes(k):
+                        all_codes.add(codes)
+
+                assert all_codes == set(sq.get_codes())
+
+                all_kinds = set()
+                for c in sq.get_codes():
+                    for kind in sq.get_kinds(c):
+                        all_kinds.add(kind)
+
+                assert all_kinds == set(sq.get_kinds())
+
+                counts = sq.get_counts()
+                for k in counts:
+                    assert set(counts[k]) == set(sq.get_counts(k))
+                    for (_, codes), count in sq.iter_counts(k):
+                        assert count == counts[k][codes]
+
+
+                db = sq.get_database()
+                counts = db.get_counts()
+                for k in counts:
+                    assert set(counts[k]) == set(db.get_counts(k))
+
+
+                if persistent is not None:
+                    sq.delete()
+                else:
+                    del sq
+
+
     def test_dig_undig(self):
         nuts = []
         for file_path in 'abcde':
@@ -181,6 +233,7 @@ class SquirrelTestCase(unittest.TestCase):
 
         f = StringIO()
         sq.print_tables(stream=f)
+        database.print_tables(stream=f)
 
         time.sleep(2)
 
@@ -439,7 +492,7 @@ class SquirrelTestCase(unittest.TestCase):
             sq.add(fns)
 
         with bench.run('stats'):
-            s = database.get_stats()
+            s = sq.get_stats()
             assert s.nfiles == len(fns)
             assert s.nnuts == len(fns)
             assert s.kinds == ['waveform']

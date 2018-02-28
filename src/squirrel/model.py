@@ -75,12 +75,12 @@ class Content(Object):
 
 
 class Waveform(Content):
-    agency = String.T(default='FDSN', optional=True, help='Agency code (2-5)')
-    network = String.T(help='Deployment/network code (1-8)')
-    station = String.T(help='Station code (1-5)')
-    location = String.T(optional=True, help='Location code (0-2)')
-    channel = String.T(optional=True, help='Channel code (3)')
-    extra = String.T(optional=True, help='Extra/custom code')
+    agency = String.T(default='', help='Agency code (2-5)')
+    network = String.T(default='', help='Deployment/network code (1-8)')
+    station = String.T(default='', help='Station code (1-5)')
+    location = String.T(default='', help='Location code (0-2)')
+    channel = String.T(default='', help='Channel code (3)')
+    extra = String.T(default='', help='Extra/custom code')
 
     tmin = Timestamp.T()
     tmax = Timestamp.T()
@@ -96,10 +96,10 @@ class Waveform(Content):
 
 
 class Station(Content):
-    agency = String.T(default='FDSN', optional=True, help='Agency code (2-5)')
-    network = String.T(help='Deployment/network code (1-8)')
-    station = String.T(help='Station code (1-5)')
-    location = String.T(optional=True, help='Location code (0-2)')
+    agency = String.T(default='', help='Agency code (2-5)')
+    network = String.T(default='', help='Deployment/network code (1-8)')
+    station = String.T(default='', help='Station code (1-5)')
+    location = String.T(default='', optional=True, help='Location code (0-2)')
 
     tmin = Timestamp.T(optional=True)
     tmax = Timestamp.T(optional=True)
@@ -113,11 +113,11 @@ class Station(Content):
 
 
 class Channel(Content):
-    agency = String.T(default='FDSN', optional=True, help='Agency code (2-5)')
-    network = String.T(help='Deployment/network code (1-8)')
-    station = String.T(help='Station code (1-5)')
-    location = String.T(optional=True, help='Location code (0-2)')
-    channel = String.T(optional=True, help='Channel code (3)')
+    agency = String.T(default='', help='Agency code (2-5)')
+    network = String.T(default='', help='Deployment/network code (1-8)')
+    station = String.T(default='', help='Station code (1-5)')
+    location = String.T(default='', help='Location code (0-2)')
+    channel = String.T(default='', help='Channel code (3)')
 
     tmin = Timestamp.T(optional=True)
     tmax = Timestamp.T(optional=True)

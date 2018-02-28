@@ -430,8 +430,8 @@ class Squirrel(Selection):
         w_kinds = ''
         args = []
         if kinds is not None:
-            w_kinds = 'AND nuts.kind IN (%s)' % ', '.join('?'*len(kinds))
-            args.append(kinds)
+            w_kinds = 'AND kind_codes.kind IN (%s)' % ', '.join('?'*len(kinds))
+            args.extend(kinds)
 
         c.execute((
             '''
@@ -439,6 +439,9 @@ class Squirrel(Selection):
                 SELECT nuts.* FROM %(db)s.%(file_states)s
                 INNER JOIN nuts
                     ON %(db)s.%(file_states)s.file_id == nuts.file_id
+                INNER JOIN kind_codes
+                    ON nuts.kind_codes_id ==
+                       kind_codes.kind_codes_id
                 WHERE %(db)s.%(file_states)s.file_state != 2
             ''' + w_kinds) % self._names, args)
 
@@ -587,13 +590,13 @@ class Squirrel(Selection):
 
     def get_counts(self, kind=None):
         d = {}
-        for (kind, codes), count in self.iter_counts():
-            if kind not in d:
-                d[kind] = {}
+        for (k, codes), count in self.iter_counts():
+            if k not in d:
+                d[k] = {}
 
-            d[kind][codes] = count
+            d[k][codes] = count
 
-        if kind is None:
+        if kind is not None:
             return d[kind]
         else:
             return d
@@ -633,41 +636,12 @@ class Squirrel(Selection):
             kinds=self.get_kinds(),
             codes=self.get_codes(),
             total_size=self.get_total_size(),
+            counts=self.get_counts(),
             tmin=tmin,
             tmax=tmax)
 
     def __str__(self):
         return str(self.get_stats())
-
-    def waveform(self, selection=None, **kwargs):
-        pass
-
-    def waveforms(self, selection=None, **kwargs):
-        pass
-
-    def station(self, selection=None, **kwargs):
-        pass
-
-    def stations(self, selection=None, **kwargs):
-        self.update_channel_inventory(selection)
-
-    def channel(self, selection=None, **kwargs):
-        pass
-
-    def channels(self, selection=None, **kwargs):
-        pass
-
-    def response(self, selection=None, **kwargs):
-        pass
-
-    def responses(self, selection=None, **kwargs):
-        pass
-
-    def event(self, selection=None, **kwargs):
-        pass
-
-    def events(self, selection=None, **kwargs):
-        pass
 
 
 class DatabaseStats(Object):
@@ -925,24 +899,6 @@ class Database(object):
 
         del selection
 
-    def get_file_stats(self, file_paths):
-        if isinstance(file_paths, str):
-            sql = '''
-                SELECT file_mtime, file.file_size
-                FROM files
-                WHERE file_path = ?
-            '''
-
-            for row in self._conn.execute(sql, (file_paths,)):
-                return row
-
-            return None
-        else:
-            selection = self.new_selection(file_paths)
-            stats = selection.get_file_stats()
-            del selection
-            return stats
-
     def new_selection(self, file_paths=None, state=0):
         selection = Selection(self)
         if file_paths:
@@ -960,6 +916,16 @@ class Database(object):
     def remove(self, file_path):
         self._conn.execute(
             'DELETE FROM files WHERE file_path = ?', (file_path,))
+
+    def reset(self, file_path):
+        self._conn.execute(
+            '''
+                UPDATE files SET
+                    file_format = NULL,
+                    file_mtime = NULL,
+                    file_size = NULL
+                WHERE file_path = ?
+            ''', (file_path,))
 
     def _iter_counts(self, kind=None, kind_codes_count='kind_codes_count'):
         args = []
@@ -981,13 +947,14 @@ class Database(object):
                 ''' + sel + '''
         ''') % {'kind_codes_count': kind_codes_count}
 
-        for kind, codes, count in self._conn.execute(sql):
+        for kind, codes, count in self._conn.execute(sql, args):
             yield (kind, tuple(codes.split('\0'))), count
 
     def _iter_codes(self, kind=None, kind_codes_count='kind_codes_count'):
         args = []
         sel = ''
         if kind is not None:
+            assert isinstance(kind, str)
             sel = 'AND kind_codes.kind == ?'
             args.append(kind)
 
@@ -1008,6 +975,7 @@ class Database(object):
         args = []
         sel = ''
         if codes is not None:
+            assert isinstance(codes, tuple)
             sel = 'AND kind_codes.codes == ?'
             args.append('\0'.join(codes))
 
@@ -1021,7 +989,7 @@ class Database(object):
             ORDER BY kind_codes.kind
         ''') % {'kind_codes_count': kind_codes_count}
 
-        for row in self._conn.execute(sql):
+        for row in self._conn.execute(sql, args):
             yield row[0]
 
     def iter_kinds(self, codes=None):
@@ -1041,13 +1009,13 @@ class Database(object):
 
     def get_counts(self, kind=None):
         d = {}
-        for (kind, codes), count in self._iter_counts():
-            if kind not in d:
-                d[kind] = {}
+        for (k, codes), count in self.iter_counts():
+            if k not in d:
+                d[k] = {}
 
-            d[kind][codes] = count
+            d[k][codes] = count
 
-        if kind is None:
+        if kind is not None:
             return d[kind]
         else:
             return d
@@ -1099,7 +1067,7 @@ class Database(object):
             w('\n')
             w('-' * 64)
             w('\n')
-            sql = ('SELECT rowid,* FROM %s' % table)
+            sql = ('SELECT * FROM %s' % table)
             tab = []
             for row in self._conn.execute(sql):
                 tab.append([str(x) for x in row])
@@ -1110,27 +1078,3 @@ class Database(object):
                 w('\n')
 
             w('\n')
-
-
-if False:
-    sq = Squirrel()
-    sq.add('/path/to/data')
-#    station = sq.add(Station(...))
-#    waveform = sq.add(Waveform(...))
-
-    station = model.Station()
-    sq.remove(station)
-
-    stations = sq.stations()
-    for waveform in sq.waveforms(stations):
-        resp = sq.response(waveform)
-        resps = sq.responses(waveform)
-        station = sq.station(waveform)
-        channel = sq.channel(waveform)
-        station = sq.station(channel)
-        channels = sq.channels(station)
-        responses = sq.responses(channel)
-        lat, lon = sq.latlon(waveform)
-        lat, lon = sq.latlon(station)
-        dist = sq.distance(station, waveform)
-        azi = sq.azimuth(channel, station)

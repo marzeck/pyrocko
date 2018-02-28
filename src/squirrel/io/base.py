@@ -207,7 +207,7 @@ def iload(
         except FileLoadError:
             logger.error('an error occured while reading file: %s' % file_path)
             if database:
-                database.remove(file_path)
+                database.reset(file_path)
 
     if database:
         if commit:

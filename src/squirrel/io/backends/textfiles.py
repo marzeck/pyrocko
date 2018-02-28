@@ -66,7 +66,7 @@ def iload(format, file_path, segment, content):
                     else:
                         description = newstr(toks[5])
 
-                    agn = ('', 'FDSN')[net != '']
+                    agn = ''
 
                     nut = model.make_station_nut(
                         file_segment=0,
