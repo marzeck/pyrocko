@@ -30,9 +30,9 @@ update_format_providers()
 
 
 class FormatDetectionFailed(FileLoadError):
-    def __init__(self, file_path):
+    def __init__(self, path):
         FileLoadError.__init__(
-            self, 'format detection failed for file: %s' % file_path)
+            self, 'format detection failed for file: %s' % path)
 
 
 class UnknownFormat(Exception):
@@ -48,18 +48,18 @@ def get_backend(fmt):
         raise UnknownFormat(fmt)
 
 
-def detect_format(file_path):
+def detect_format(path):
     '''Determine file type from first 512 bytes.'''
 
-    if file_path.startswith('virtual:'):
+    if path.startswith('virtual:'):
         return 'virtual'
 
     try:
-        with open(file_path, 'rb') as f:
+        with open(path, 'rb') as f:
             data = f.read(512)
 
     except OSError as e:
-        raise FormatDetectionFailed(file_path)
+        raise FormatDetectionFailed(path)
 
     fmt = None
     for mod in backend_modules:
@@ -67,7 +67,7 @@ def detect_format(file_path):
         if fmt is not None:
             return fmt
 
-    raise FormatDetectionFailed(file_path)
+    raise FormatDetectionFailed(path)
 
 
 def iload(
@@ -138,10 +138,10 @@ def iload(
             raise TypeError(
                 'iload: skip_unchanged argument requires database')
 
-        it = ((file_path, []) for file_path in file_paths)
+        it = ((path, []) for path in file_paths)
 
     n_files = 0
-    for file_path, old_nuts in it:
+    for path, old_nuts in it:
         n_files += 1
         if database and commit and n_files % 1000 == 0:
             database.commit()
@@ -160,7 +160,7 @@ def iload(
 
                 if db_only_operation:
                     logger.debug('using cached information for file %s, '
-                                 % file_path)
+                                 % path)
 
                     for nut in old_nuts:
                         if nut.kind in content:
@@ -175,17 +175,17 @@ def iload(
                 if old_nuts and not old_nuts[0].file_modified():
                     format_this = old_nuts[0].file_format
                 else:
-                    format_this = detect_format(file_path)
+                    format_this = detect_format(path)
             else:
                 format_this = format
 
             mod = get_backend(format_this)
-            mtime, size = mod.get_stats(file_path)
+            mtime, size = mod.get_stats(path)
 
-            logger.debug('reading file %s' % file_path)
+            logger.debug('reading file %s' % path)
             nuts = []
-            for nut in mod.iload(format_this, file_path, segment, content):
-                nut.file_path = file_path
+            for nut in mod.iload(format_this, path, segment, content):
+                nut.file_path = path
                 nut.file_format = format_this
                 nut.file_mtime = mtime
                 nut.file_size = size
@@ -196,18 +196,18 @@ def iload(
 
             if database and nuts != old_nuts:
                 if segment is not None:
-                    nuts = mod.iload(format_this, file_path, None, [])
+                    nuts = mod.iload(format_this, path, None, [])
                     for nut in nuts:
-                        nut.file_path = file_path
+                        nut.file_path = path
                         nut.file_format = format_this
                         nut.file_mtime = mtime
 
                 database.dig(nuts)
 
         except FileLoadError:
-            logger.error('an error occured while reading file: %s' % file_path)
+            logger.error('an error occured while reading file: %s' % path)
             if database:
-                database.reset(file_path)
+                database.reset(path)
 
     if database:
         if commit:

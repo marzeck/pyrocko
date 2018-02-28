@@ -165,10 +165,10 @@ class SquirrelTestCase(unittest.TestCase):
 
     def test_dig_undig(self):
         nuts = []
-        for file_path in 'abcde':
+        for path in 'abcde':
             for file_element in range(2):
                 nuts.append(squirrel.Nut(
-                    file_path=file_path,
+                    file_path=path,
                     file_format='test',
                     file_segment=0,
                     file_element=file_element,
@@ -178,30 +178,30 @@ class SquirrelTestCase(unittest.TestCase):
         database.dig(nuts)
 
         data = defaultdict(list)
-        for file_path in 'abcde':
-            nuts2 = database.undig(file_path)
+        for path in 'abcde':
+            nuts2 = database.undig(path)
             for nut in nuts2:
                 data[nut.file_path].append(nut.file_element)
 
-        for file_path in 'abcde':
-            self.assertEqual([0, 1], sorted(data[file_path]))
+        for path in 'abcde':
+            self.assertEqual([0, 1], sorted(data[path]))
 
         data = defaultdict(list)
-        for file_path in 'ac':
-            nuts2 = database.undig(file_path)
+        for path in 'ac':
+            nuts2 = database.undig(path)
             for nut in nuts2:
                 data[nut.file_path].append(nut.file_element)
 
-        for file_path in 'ac':
-            self.assertEqual([0, 1], sorted(data[file_path]))
+        for path in 'ac':
+            self.assertEqual([0, 1], sorted(data[path]))
 
         data = defaultdict(list)
         for fn, nuts3 in database.undig_all():
             for nut in nuts3:
                 data[nut.file_path].append(nut.file_element)
 
-        for file_path in 'abcde':
-            self.assertEqual([0, 1], sorted(data[file_path]))
+        for path in 'abcde':
+            self.assertEqual([0, 1], sorted(data[path]))
 
     def test_add_update(self):
 
@@ -296,14 +296,14 @@ class SquirrelTestCase(unittest.TestCase):
 
         all_nuts = []
         for it in range(nt):
-            file_path = 'virtual:file_%i' % it
+            path = 'virtual:file_%i' % it
             tmin = txs[it]
             tmax = txs[it+1]
             tmin_seconds, tmin_offset = squirrel.model.tsplit(tmin)
             tmax_seconds, tmax_offset = squirrel.model.tsplit(tmax)
             for file_element in range(ne):
                 all_nuts.append(squirrel.Nut(
-                    file_path=file_path,
+                    file_path=path,
                     file_format='virtual',
                     file_segment=0,
                     file_element=file_element,

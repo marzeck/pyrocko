@@ -97,7 +97,7 @@ class Selection(object):
         self._conn.execute(
             '''
                 CREATE TEMP TABLE temp.%(bulkinsert)s
-                (file_path text)
+                (path text)
             ''' % self._names)
 
         self._conn.executemany(
@@ -107,7 +107,7 @@ class Selection(object):
         self._conn.execute(
             '''
                 INSERT OR IGNORE INTO files
-                SELECT NULL, file_path, NULL, NULL, NULL
+                SELECT NULL, path, NULL, NULL, NULL
                 FROM temp.%(bulkinsert)s
             ''' % self._names)
 
@@ -117,7 +117,7 @@ class Selection(object):
                 SELECT files.file_id, ?
                 FROM temp.%(bulkinsert)s
                 INNER JOIN files
-                ON temp.%(bulkinsert)s.file_path == files.file_path
+                ON temp.%(bulkinsert)s.path == files.path
             ''' % self._names, (state,))
 
         self._conn.execute(
@@ -130,8 +130,8 @@ class Selection(object):
                 WHERE %(db)s.%(file_states)s.file_id ==
                     (SELECT files.file_id
                      FROM files
-                     WHERE files.file_path == ?)
-            ''' % self._names, ((file_path,) for file_path in file_paths))
+                     WHERE files.path == ?)
+            ''' % self._names, ((path,) for path in file_paths))
 
     def undig_grouped(self, skip_unchanged=False):
 
@@ -144,10 +144,10 @@ class Selection(object):
 
         sql = ('''
             SELECT
-                files.file_path,
-                files.file_format,
-                files.file_mtime,
-                files.file_size,
+                files.path,
+                files.format,
+                files.mtime,
+                files.size,
                 nuts.file_segment,
                 nuts.file_element,
                 kind_codes.kind,
@@ -169,26 +169,26 @@ class Selection(object):
         ''') % self._names
 
         nuts = []
-        file_path = None
+        path = None
         for values in self._conn.execute(sql):
-            if file_path is not None and values[0] != file_path:
-                yield file_path, nuts
+            if path is not None and values[0] != path:
+                yield path, nuts
                 nuts = []
 
             if values[1] is not None:
                 nuts.append(model.Nut(values_nocheck=values))
 
-            file_path = values[0]
+            path = values[0]
 
-        if file_path is not None:
-            yield file_path, nuts
+        if path is not None:
+            yield path, nuts
 
     def flag_unchanged(self, check=True):
         sql = '''
             UPDATE %(db)s.%(file_states)s
             SET file_state = 0
             WHERE (
-                SELECT file_mtime
+                SELECT mtime
                 FROM files
                 WHERE files.file_id == %(db)s.%(file_states)s.file_id) IS NULL
         ''' % self._names
@@ -202,10 +202,10 @@ class Selection(object):
             sql = '''
                 SELECT
                     files.file_id,
-                    files.file_path,
-                    files.file_format,
-                    files.file_mtime,
-                    files.file_size
+                    files.path,
+                    files.format,
+                    files.mtime,
+                    files.size
                 FROM %(db)s.%(file_states)s
                 INNER JOIN files
                     ON %(db)s.%(file_states)s.file_id == files.file_id
@@ -213,12 +213,12 @@ class Selection(object):
                 ORDER BY %(db)s.%(file_states)s.file_id
             ''' % self._names
 
-            for (file_id, file_path, fmt, mtime_db,
+            for (file_id, path, fmt, mtime_db,
                     size_db) in self._conn.execute(sql):
 
                 try:
                     mod = io.get_backend(fmt)
-                    file_stats = mod.get_stats(file_path)
+                    file_stats = mod.get_stats(path)
                 except FileLoadError:
                     yield 0, file_id
                     continue
@@ -485,10 +485,10 @@ class Squirrel(Selection):
 
         sql = ('''
             SELECT
-                files.file_path,
-                files.file_format,
-                files.file_mtime,
-                files.file_size,
+                files.path,
+                files.format,
+                files.mtime,
+                files.size,
                 %(db)s.%(nuts)s.file_segment,
                 %(db)s.%(nuts)s.file_element,
                 kind_codes.kind,
@@ -519,10 +519,10 @@ class Squirrel(Selection):
 
         sql = '''
             SELECT
-                files.file_path,
-                files.file_format,
-                files.file_mtime,
-                files.file_size,
+                files.path,
+                files.format,
+                files.mtime,
+                files.size,
                 %(db)s.%(nuts)s.file_segment,
                 %(db)s.%(nuts)s.file_element,
                 kind_codes.kind,
@@ -604,8 +604,8 @@ class Squirrel(Selection):
     def update_channel_inventory(self, selection):
         for source in self._sources:
             source.update_channel_inventory(selection)
-            for file_path in source.get_channel_file_paths(selection):
-                self.add(file_path)
+            for path in source.get_channel_file_paths(selection):
+                self.add(path)
 
     def get_nfiles(self):
         sql = '''SELECT COUNT(*) FROM %(db)s.%(file_states)s''' % self._names
@@ -619,7 +619,7 @@ class Squirrel(Selection):
 
     def get_total_size(self):
         sql = '''
-            SELECT SUM(files.file_size) FROM %(db)s.%(file_states)s
+            SELECT SUM(files.size) FROM %(db)s.%(file_states)s
             INNER JOIN files
                 ON %(db)s.%(file_states)s.file_id = files.file_id
         ''' % self._names
@@ -673,16 +673,16 @@ class Database(object):
             '''
                 CREATE TABLE IF NOT EXISTS files (
                     file_id integer PRIMARY KEY,
-                    file_path text,
-                    file_format text,
-                    file_mtime float,
-                    file_size integer)
+                    path text,
+                    format text,
+                    mtime float,
+                    size integer)
             ''')
 
         c.execute(
             '''
                 CREATE UNIQUE INDEX IF NOT EXISTS index_files_file_path
-                ON files (file_path)
+                ON files (path)
             ''')
 
         c.execute(
@@ -799,8 +799,8 @@ class Database(object):
 
         c.executemany(
             '''UPDATE files SET
-                file_format = ?, file_mtime = ?, file_size = ?
-                WHERE file_path == ?
+                format = ?, mtime = ?, size = ?
+                WHERE path == ?
             ''',
             ((x[1], x[2], x[3], x[0]) for x in files))
 
@@ -812,7 +812,7 @@ class Database(object):
                 INSERT INTO nuts VALUES
                     (NULL, (
                         SELECT file_id FROM files
-                        WHERE file_path == ?
+                        WHERE path == ?
                      ),?,?,
                      (
                         SELECT kind_codes_id FROM kind_codes
@@ -828,13 +828,13 @@ class Database(object):
         self._need_commit = True
         c.close()
 
-    def undig(self, file_path):
+    def undig(self, path):
         sql = '''
             SELECT
-                files.file_path,
-                files.file_format,
-                files.file_mtime,
-                files.file_size,
+                files.path,
+                files.format,
+                files.mtime,
+                files.size,
                 nuts.file_segment,
                 nuts.file_element,
                 kind_codes.kind,
@@ -848,19 +848,19 @@ class Database(object):
             INNER JOIN nuts ON files.file_id = nuts.file_id
             INNER JOIN kind_codes
                 ON nuts.kind_codes_id == kind_codes.kind_codes_id
-            WHERE file_path == ?
+            WHERE path == ?
         '''
 
         return [model.Nut(values_nocheck=row)
-                for row in self._conn.execute(sql, (file_path,))]
+                for row in self._conn.execute(sql, (path,))]
 
     def undig_all(self):
         sql = '''
             SELECT
-                files.file_path,
-                files.file_format,
-                files.file_mtime,
-                files.file_size,
+                files.path,
+                files.format,
+                files.mtime,
+                files.size,
                 nuts.file_segment,
                 nuts.file_element,
                 kind_codes.kind,
@@ -877,25 +877,25 @@ class Database(object):
         '''
 
         nuts = []
-        file_path = None
+        path = None
         for values in self._conn.execute(sql):
-            if file_path is not None and values[0] != file_path:
-                yield file_path, nuts
+            if path is not None and values[0] != path:
+                yield path, nuts
                 nuts = []
 
             if values[1] is not None:
                 nuts.append(model.Nut(values_nocheck=values))
 
-            file_path = values[0]
+            path = values[0]
 
-        if file_path is not None:
-            yield file_path, nuts
+        if path is not None:
+            yield path, nuts
 
     def undig_many(self, file_paths):
         selection = self.new_selection(file_paths)
 
-        for file_path, nuts in selection.undig_grouped():
-            yield file_path, nuts
+        for path, nuts in selection.undig_grouped():
+            yield path, nuts
 
         del selection
 
@@ -913,19 +913,19 @@ class Database(object):
     def undig_content(self, nut):
         return None
 
-    def remove(self, file_path):
+    def remove(self, path):
         self._conn.execute(
-            'DELETE FROM files WHERE file_path = ?', (file_path,))
+            'DELETE FROM files WHERE path = ?', (path,))
 
-    def reset(self, file_path):
+    def reset(self, path):
         self._conn.execute(
             '''
                 UPDATE files SET
-                    file_format = NULL,
-                    file_mtime = NULL,
-                    file_size = NULL
-                WHERE file_path = ?
-            ''', (file_path,))
+                    format = NULL,
+                    mtime = NULL,
+                    size = NULL
+                WHERE path = ?
+            ''', (path,))
 
     def _iter_counts(self, kind=None, kind_codes_count='kind_codes_count'):
         args = []
@@ -1032,7 +1032,7 @@ class Database(object):
 
     def get_total_size(self):
         sql = '''
-            SELECT SUM(files.file_size) FROM files
+            SELECT SUM(files.size) FROM files
         '''
 
         for row in self._conn.execute(sql):
