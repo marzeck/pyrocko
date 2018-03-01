@@ -3,7 +3,7 @@ import numpy as num
 from pyrocko import util
 from pyrocko.guts import Object, String, Timestamp, Float, Int, Unicode
 from pyrocko.guts_array import Array
-from pyrocko.squirrel import io
+from . import io
 
 
 def str_or_none(x):
@@ -352,3 +352,11 @@ def make_event_nut(name='', **kwargs):
         kind='event',
         codes=codes,
         **kwargs)
+
+
+__all__ = [
+    'Waveform',
+    'Station',
+    'Channel',
+    'Nut',
+]

@@ -3,7 +3,6 @@ import logging
 from builtins import str as newstr
 
 from pyrocko.io_common import FileLoadError
-from ..squirrel import Selection
 from .backends import mseed, sac, datacube, stationxml, textfiles, virtual
 
 backend_modules = [mseed, sac, datacube, stationxml, textfiles, virtual]
@@ -99,6 +98,8 @@ def iload(
         for new / modified files
     :param content: list of strings, selection of content types to load
     '''
+
+    from ..base import Selection
 
     n_db = 0
     n_load = 0
@@ -218,3 +219,12 @@ def iload(
 
     logger.debug('iload: from db: %i, from files: %i, files: %i' % (
         n_db, n_load, n_files))
+
+
+__all__ = [
+    'iload',
+    'detect_format',
+    'get_backend',
+    'FormatDetectionFailed',
+    'UnknownFormat',
+]

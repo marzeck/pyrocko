@@ -5,10 +5,11 @@ import threading
 import sqlite3
 
 from pyrocko.io_common import FileLoadError
-from pyrocko.squirrel import model, io
-from pyrocko.squirrel.client import fdsn
 from pyrocko.guts import Object, Int, List, String, Timestamp, Dict
 from pyrocko import config
+
+from . import model, io
+from .client import fdsn
 
 
 g_databases = {}
@@ -1078,3 +1079,12 @@ class Database(object):
                 w('\n')
 
             w('\n')
+
+
+__all__ = [
+    'Selection',
+    'Squirrel',
+    'SquirrelStats',
+    'Database',
+    'DatabaseStats',
+]

@@ -1,7 +1,8 @@
-from pyrocko.io.io_common import get_stats  # noqa
-from pyrocko.squirrel import model
 import logging
 from builtins import str as newstr
+
+from pyrocko.io.io_common import get_stats  # noqa
+from ... import model
 
 logger = logging.getLogger('pyrocko.squirrel.io.textfiles')
 

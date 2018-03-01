@@ -1,10 +1,4 @@
-from .base import iload, detect_format, get_backend, FormatDetectionFailed, \
-    UnknownFormat
+from . import base
+from .base import *
 
-__all__ = [
-    'iload',
-    'detect_format',
-    'get_backend',
-    'FormatDetectionFailed',
-    'UnknownFormat',
-]
+__all__ = base.__all__

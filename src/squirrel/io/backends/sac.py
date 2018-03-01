@@ -1,5 +1,5 @@
 from pyrocko.io.io_common import get_stats  # noqa
-from pyrocko.squirrel import model
+from ... import model
 
 
 km = 1000.

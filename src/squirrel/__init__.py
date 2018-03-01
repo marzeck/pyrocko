@@ -1,3 +1,7 @@
-from pyrocko.squirrel.io import detect_format, iload
-from pyrocko.squirrel.squirrel import Database, Selection, Squirrel
-from pyrocko.squirrel.model import Nut, Waveform, Station, Channel, Response
+from . import base, model, io
+
+from .base import *  # noqa
+from .model import *  # noqa
+from .io import *  # noqa
+
+__all__ = base.__all__ + model.__all__ + io.__all__

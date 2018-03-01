@@ -49,10 +49,10 @@ class SquirrelTestCase(unittest.TestCase):
         with open(fpath, 'wb'):
             pass
 
-        with self.assertRaises(squirrel.io.FormatDetectionFailed):
+        with self.assertRaises(squirrel.FormatDetectionFailed):
             squirrel.detect_format(fpath)
 
-        with self.assertRaises(squirrel.io.FormatDetectionFailed):
+        with self.assertRaises(squirrel.FormatDetectionFailed):
             squirrel.detect_format('nonexist')
 
     def test_load(self):
@@ -107,7 +107,7 @@ class SquirrelTestCase(unittest.TestCase):
 
         assert ii == 0
 
-        with self.assertRaises(squirrel.io.UnknownFormat):
+        with self.assertRaises(squirrel.UnknownFormat):
             for nut in squirrel.iload(fpath, format='nonexist'):
                 pass
 
