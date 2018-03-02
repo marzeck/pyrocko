@@ -4,6 +4,7 @@ Reference
 .. toctree::
    :maxdepth: 3
 
+   squirrel
    io
    trace
    model

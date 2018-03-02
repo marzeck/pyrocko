@@ -71,10 +71,18 @@ def tscale_to_kscale(tscale):
 
 
 class Content(Object):
+    '''
+    Base class for content types in the Squirrel framework.
+    '''
+
     pass
 
 
 class Waveform(Content):
+    '''
+    A continuous seismic waveform snippet.
+    '''
+
     agency = String.T(default='', help='Agency code (2-5)')
     network = String.T(default='', help='Deployment/network code (1-8)')
     station = String.T(default='', help='Station code (1-5)')
@@ -96,6 +104,10 @@ class Waveform(Content):
 
 
 class Station(Content):
+    '''
+    A seismic station.
+    '''
+
     agency = String.T(default='', help='Agency code (2-5)')
     network = String.T(default='', help='Deployment/network code (1-8)')
     station = String.T(default='', help='Station code (1-5)')
@@ -113,6 +125,10 @@ class Station(Content):
 
 
 class Channel(Content):
+    '''
+    A channel of a seismic station.
+    '''
+
     agency = String.T(default='', help='Agency code (2-5)')
     network = String.T(default='', help='Deployment/network code (1-8)')
     station = String.T(default='', help='Station code (1-5)')
@@ -133,10 +149,18 @@ class Channel(Content):
 
 
 class Response(Content):
+    '''
+    The instrument response of a seismic station channel.
+    '''
+
     pass
 
 
 class Event(Content):
+    '''
+    A seismic event.
+    '''
+
     name = String.T(optional=True)
     time = Timestamp.T()
     duration = Float.T(optional=True)
@@ -150,6 +174,13 @@ class Event(Content):
 
 
 class Nut(Object):
+    '''Container for elementary content meta-information.
+
+    So-called *nuts* are used in Pyrocko's Squirrel framework to hold common
+    meta-information about individual pieces of waveforms, stations, channels,
+    etc. together with the information where it was found or generated.
+    '''
+
     file_path = String.T(optional=True)
     file_format = String.T(optional=True)
     file_mtime = Timestamp.T(optional=True)
@@ -355,6 +386,7 @@ def make_event_nut(name='', **kwargs):
 
 
 __all__ = [
+    'Content',
     'Waveform',
     'Station',
     'Channel',

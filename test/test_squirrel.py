@@ -158,7 +158,7 @@ class SquirrelTestCase(unittest.TestCase):
 
 
                 if persistent is not None:
-                    sq.delete()
+                    sq._delete()
                 else:
                     del sq
 
@@ -232,8 +232,8 @@ class SquirrelTestCase(unittest.TestCase):
         assert sq.time_span() == (0., 1.)
 
         f = StringIO()
-        sq.print_tables(stream=f)
-        database.print_tables(stream=f)
+        sq._print_tables(stream=f)
+        database._print_tables(stream=f)
 
         time.sleep(2)
 
@@ -363,7 +363,7 @@ class SquirrelTestCase(unittest.TestCase):
                 tmin = tmin_g + iwin * tinc
                 tmax = tmin_g + (iwin+1) * tinc
 
-                expect.append(len(list(sq.undig_span_naiv(tmin, tmax))))
+                expect.append(len(list(sq._undig_span_naiv(tmin, tmax))))
                 assert expect[-1] >= 10
 
         with bench.run('undig span'):

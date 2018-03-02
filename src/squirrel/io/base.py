@@ -29,18 +29,32 @@ update_format_providers()
 
 
 class FormatDetectionFailed(FileLoadError):
+    '''
+    Exception raised when file format detection fails.
+    '''
+
     def __init__(self, path):
         FileLoadError.__init__(
             self, 'format detection failed for file: %s' % path)
 
 
 class UnknownFormat(Exception):
+    '''
+    Exception raised when user requests an unknown file format.
+    '''
+
     def __init__(self, format):
         FileLoadError.__init__(
             self, 'unknown format: %s' % format)
 
 
 def get_backend(fmt):
+    '''
+    Get squirrel io backend module for a given file format.
+
+    :params str fmt: format identifier
+    '''
+
     try:
         return g_format_providers[fmt][0]
     except KeyError:
@@ -48,7 +62,11 @@ def get_backend(fmt):
 
 
 def detect_format(path):
-    '''Determine file type from first 512 bytes.'''
+    '''
+    Determine file type from first 512 bytes.
+
+    :param str path: path of file
+    '''
 
     if path.startswith('virtual:'):
         return 'virtual'
@@ -70,7 +88,7 @@ def detect_format(path):
 
 
 def iload(
-        file_paths,
+        paths,
         segment=None,
         format='detect',
         database=None,
@@ -80,23 +98,33 @@ def iload(
         content=['waveform', 'station', 'channel', 'response', 'event']):
 
     '''
-    Iteratively load content or index from files.
+    Iteratively load content or index/reindex meta-information from files.
 
-    :param file_paths: iterator yielding file names to load from or
+    :param paths: iterator yielding file names to load from or
         :py:class:`pyrocko.squirrel.Selection` object
-    :param segment: ``str`` file-specific segment identifier (con only be used
+    :param str segment: file-specific segment identifier (con only be used
         when loading from a single file.
-    :param format: ``str`` file format or ``'detect'`` for autodetection
-    :param database: :py:class:`pyrocko.squirrel.Database` object to use
-        as index cache
-    :param check:  ``bool`` flag, if ``True``, investigate modification time
-        and file sizes of known files to debunk modified files (pessimistic),
-        or ``False`` to deactivate checks (optimistic)
-    :param commit: ``bool`` flag, whether to commit updated information to the
-        index cache
-    :param skip_unchanged: ``bool`` flag, if ``True``, only yield index nuts
+    :param str format: file format identifier or ``'detect'`` for autodetection
+    :param database: database to use for meta-information caching
+    :type database: :py:class:`pyrocko.squirrel.Database`
+    :param bool check: if ``True``, investigate modification time and file
+        sizes of known files to debunk modified files (pessimistic mode), or
+        ``False`` to deactivate checks (optimistic mode)
+    :param bool commit: flag, whether to commit updated information to the
+        meta-information database
+    :param bool skip_unchanged: if ``True``, only yield index nuts
         for new / modified files
     :param content: list of strings, selection of content types to load
+
+    This generator yields :py:class:`pyrocko.squirrel.Nut` objects for
+    individual pieces of information found when reading the given files. Such a
+    nut may represent a waveform, a station, a channel, an event or other data
+    type. The nut itself only contains the meta-information. The actual content
+    information is attached to the nut if requested. All nut meta-information
+    is stored in the squirrel meta-information database. If possible, this function
+    avoids accessing the actual disk files and provides the requested
+    information straight from the database. Modified files are recognized and
+    reindexed as needed. 
     '''
 
     from ..base import Selection
@@ -105,16 +133,16 @@ def iload(
     n_load = 0
     selection = None
 
-    if isinstance(file_paths, (str, newstr)):
-        file_paths = [file_paths]
+    if isinstance(paths, (str, newstr)):
+        paths = [paths]
     else:
         if segment is not None:
             raise TypeError(
                 'iload: segment argument can only be used when loading from '
                 'a single file')
 
-        if isinstance(file_paths, Selection):
-            selection = file_paths
+        if isinstance(paths, Selection):
+            selection = paths
             if database is not None:
                 raise TypeError(
                     'iload: database argument must be None when called with a '
@@ -125,7 +153,7 @@ def iload(
     temp_selection = None
     if database:
         if not selection:
-            temp_selection = database.new_selection(file_paths, state=1)
+            temp_selection = database.new_selection(paths, state=1)
             selection = temp_selection
 
         if skip_unchanged:
@@ -139,7 +167,7 @@ def iload(
             raise TypeError(
                 'iload: skip_unchanged argument requires database')
 
-        it = ((path, []) for path in file_paths)
+        it = ((path, []) for path in paths)
 
     n_files = 0
     for path, old_nuts in it:

@@ -44,6 +44,22 @@ def make_unique_name():
 
 
 class Selection(object):
+
+    '''
+    Database backed file selection.
+
+    :param database: :py:class:`Database` object or path to database or
+        ``None`` for user's default database
+    :param str persistent: if given a name, create a persistent selection
+
+    By default, a temporary table in the database is created to hold the names
+    of the files in the selection. This table is only visible inside the
+    application which created it. If a name is given to ``persistent``, a named
+    selection is created, which is visible also in other applications using the
+    same database. Paths of files can be added to the selection using the
+    :py:meth:`add` method.
+    '''
+
     def __init__(self, database=None, persistent=None):
         if database is None and persistent is not None:
             raise Exception(
@@ -81,18 +97,33 @@ class Selection(object):
 
     def __del__(self):
         if not self._persistent:
-            self.delete()
+            self._delete()
         else:
             self._conn.commit()
 
     def get_database(self):
+        '''
+        Get the database to which this selection belongs.
+
+        :returns: :py:class:`Database` object
+        '''
         return self._database
 
-    def delete(self):
+    def _delete(self):
+        '''
+        Destroy the tables assoctiated with this selection.
+        '''
         self._conn.execute(
             'DROP TABLE %(db)s.%(file_states)s' % self._names)
 
     def add(self, file_paths, state=0):
+        '''
+        Add files to the selection.
+
+        :param file_paths: Paths to files to be added to the selection.
+        :type file_paths: ``list`` of ``str``
+        '''
+
         if isinstance(file_paths, str):
             file_paths = [file_paths]
         self._conn.execute(
@@ -125,6 +156,12 @@ class Selection(object):
             'DROP TABLE temp.%(bulkinsert)s' % self._names)
 
     def remove(self, file_paths):
+        '''
+        Remove files from the selection.
+
+        :param file_paths: Paths to files to be removed from the selection.
+        :type file_paths: ``list`` of ``str``
+        '''
         self._conn.executemany(
             '''
                 DELETE FROM %(db)s.%(file_states)s
@@ -135,6 +172,17 @@ class Selection(object):
             ''' % self._names, ((path,) for path in file_paths))
 
     def undig_grouped(self, skip_unchanged=False):
+        '''
+        Get content inventory of all files in selection.
+
+        :param: skip_unchanged: if ``True`` only inventory of modified files
+            is yielded (:py:class:`flag_unchanged` must be called beforehand).
+
+        This generator yields tuples ``(path, nuts)`` where ``path`` is the
+        path to the file and ``nuts`` is a list of
+        :py:class:`pyrocko.squirrel.Nut` objects representing the contents of
+        the file.
+        '''
 
         if skip_unchanged:
             where = '''
@@ -185,6 +233,13 @@ class Selection(object):
             yield path, nuts
 
     def flag_unchanged(self, check=True):
+        '''
+        Mark files which have not been modified.
+
+        :param check: if ``True`` query modification times of known files on
+            disk. If ``False``, only flag unknown files.
+        '''
+
         sql = '''
             UPDATE %(db)s.%(file_states)s
             SET file_state = 0
@@ -242,17 +297,51 @@ class Selection(object):
 
 
 class SquirrelStats(Object):
-    nfiles = Int.T()
-    nnuts = Int.T()
-    codes = List.T(List.T(String.T()))
-    kinds = List.T(String.T())
-    total_size = Int.T()
-    counts = Dict.T(String.T(), Dict.T(String.T(), Int.T()))
-    tmin = Timestamp.T(optional=True)
-    tmax = Timestamp.T(optional=True)
+    '''
+    Container to hold statistics about contents available through a squirrel.
+    '''
+
+    nfiles = Int.T(
+        help='number of files in selection')
+    nnuts = Int.T(
+        help='number of index nuts in selection')
+    codes = List.T(
+        List.T(String.T()),
+        help='available code sequences in selection, e.g. '
+             '(agency, network, station, location) for stations nuts.')
+    kinds = List.T(
+        String.T(),
+        help='available content types in selection')
+    total_size = Int.T(
+        help='aggregated file size of files is selection')
+    counts = Dict.T(
+        String.T(), Dict.T(String.T(), Int.T()),
+        help='breakdown of how many nuts of any content type and code '
+             'sequence are available in selection, ``counts[kind][codes]``')
+    tmin = Timestamp.T(
+        optional=True,
+        help='earliest start time of all nuts in selection')
+    tmax = Timestamp.T(
+        optional=True,
+        help='latest end time of all nuts in selection')
 
 
 class Squirrel(Selection):
+    '''
+    Prompt, lazy, indexing, caching, dynamic seismological dataset access.
+
+    :param database: :py:class:`Database` object or path to database or
+        ``None`` for user's default database
+    :param str persistent: if given a name, create a persistent selection
+
+    By default, temporary tables are created in the attached database to hold
+    the names of the files in the selection as well as various indices and
+    counters. These tables are only visible inside the application which
+    created it. If a name is given to ``persistent``, a named selection is
+    created, which is visible also in other applications using the same
+    database. Paths of files can be added to the selection using the
+    :py:meth:`add` method.
+    '''
 
     def __init__(self, database=None, persistent=None):
         Selection.__init__(self, database=database, persistent=persistent)
@@ -369,16 +458,18 @@ class Squirrel(Selection):
                 END
             ''' % self._names)
 
-    def delete(self):
+    def _delete(self):
+        '''Delete database tables associated with this squirrel.'''
+
         self._conn.execute(
             'DROP TABLE %(db)s.%(nuts)s' % self._names)
 
         self._conn.execute(
             'DROP TABLE %(db)s.%(kind_codes_count)s' % self._names)
 
-        Selection.delete(self)
+        Selection._delete(self)
 
-    def print_tables(self, stream=None):
+    def _print_tables(self, stream=None):
         if stream is None:
             stream = sys.stdout
 
@@ -410,6 +501,19 @@ class Squirrel(Selection):
             w('\n')
 
     def add(self, file_paths, kinds=None, format='detect', check=True):
+        '''
+        Add files to the selection.
+
+        :param file_paths: Iterator yielding paths to files to be added to the
+            selection.
+        :param kinds: if given, allowed content types to be made available
+            through the squirrel selection
+        :type kinds: ``list`` of ``str``
+        :param str format: file format identifier or ``'detect'`` for
+            autodetection
+
+        Complexity: O(log N)
+        '''
         if isinstance(kinds, str):
             kinds = (kinds,)
 
@@ -453,10 +557,24 @@ class Squirrel(Selection):
             ''' % self._names)
 
     def add_fdsn_site(self, site):
+        '''
+        Add FDSN site for transparent remote data access.
+        '''
+
         self._sources.append(fdsn.FDSNSource(site))
 
     def undig_span(self, tmin, tmax):
-        '''Get nuts intersecting with the half open interval [tmin, tmax[.'''
+        '''
+        Iterate content intersecting with the half open interval [tmin, tmax[.
+
+        :param tmin: timestamp, start time of interval
+        :param tmax: timestamp, end time of interval
+
+        Complexity: O(log N)
+
+        Yields :py:class:`pyrocko.squirrel.Nut` objects representing the
+        intersecting content.
+        '''
 
         tmin_seconds, tmin_offset = model.tsplit(tmin)
         tmax_seconds, tmax_offset = model.tsplit(tmax)
@@ -514,7 +632,7 @@ class Squirrel(Selection):
             if nut.tmin < tmax and tmin < nut.tmax:
                 yield nut
 
-    def undig_span_naiv(self, tmin, tmax):
+    def _undig_span_naiv(self, tmin, tmax):
         tmin_seconds, tmin_offset = model.tsplit(tmin)
         tmax_seconds, tmax_offset = model.tsplit(tmax)
 
@@ -548,6 +666,13 @@ class Squirrel(Selection):
                 yield nut
 
     def time_span(self):
+        '''
+        Get time interval over all content in selection.
+
+        Complexity O(1), independent of number of nuts
+
+        :returns: (tmin, tmax)
+        '''
         sql = '''
             SELECT MIN(tmin_seconds + tmin_offset)
             FROM %(db)s.%(nuts)s WHERE
@@ -569,27 +694,79 @@ class Squirrel(Selection):
         return tmin, tmax
 
     def iter_kinds(self, codes=None):
+        '''
+        Iterate over content types available in selection.
+
+        :param codes: if given, get kinds only for selected codes identifier
+
+        Complexity: O(1), independent of number of nuts
+        '''
+
         return self._database._iter_kinds(
             codes=codes,
             kind_codes_count='%(db)s.%(kind_codes_count)s' % self._names)
 
     def iter_codes(self, kind=None):
+        '''
+        Iterate over content identifier code sequences available in selection.
+
+        :param kind: if given, get codes only for a given content type
+
+        Complexity: O(1), independent of number of nuts
+        '''
         return self._database._iter_codes(
             kind=kind,
             kind_codes_count='%(db)s.%(kind_codes_count)s' % self._names)
 
     def iter_counts(self, kind=None):
+        '''
+        Iterate over number of occurences of any (kind, codes) combination.
+
+        :param kind: if given, get counts only for selected content type
+
+        Yields tuples ``((kind, codes), count)``
+
+        Complexity: O(1), independent of number of nuts
+        '''
         return self._database._iter_counts(
             kind=kind,
             kind_codes_count='%(db)s.%(kind_codes_count)s' % self._names)
 
     def get_kinds(self, codes=None):
+        '''
+        Get content types available in selection.
+
+        :param codes: if given, get kinds only for selected codes identifier
+
+        Complexity: O(1), independent of number of nuts
+
+        :returns: sorted list of available content types
+        '''
         return sorted(list(self.iter_kinds(codes=codes)))
 
     def get_codes(self, kind=None):
+        '''
+        Get itentifier code sequences available in selection.
+
+        :param kind: if given, get codes only for selected content type
+
+        Complexity: O(1), independent of number of nuts
+
+        :returns: sorted list of available codes
+        '''
         return sorted(list(self.iter_codes(kind=kind)))
 
     def get_counts(self, kind=None):
+        '''
+        Get number of occurences of any (kind, codes) combination.
+
+        :param kind: if given, get codes only for selected content type
+
+        Complexity: O(1), independent of number of nuts
+
+        :returns: ``dict`` with ``counts[kind][codes] or ``counts[codes]`` 
+            if kind is not ``Null``
+        '''
         d = {}
         for (k, codes), count in self.iter_counts():
             if k not in d:
@@ -609,16 +786,20 @@ class Squirrel(Selection):
                 self.add(path)
 
     def get_nfiles(self):
+        '''Get number of files in selection.'''
+
         sql = '''SELECT COUNT(*) FROM %(db)s.%(file_states)s''' % self._names
         for row in self._conn.execute(sql):
             return row[0]
 
     def get_nnuts(self):
+        '''Get number of nuts in selection.'''
         sql = '''SELECT COUNT(*) FROM %(db)s.%(nuts)s''' % self._names
         for row in self._conn.execute(sql):
             return row[0]
 
     def get_total_size(self):
+        '''Get aggregated file size available in selection.'''
         sql = '''
             SELECT SUM(files.size) FROM %(db)s.%(file_states)s
             INNER JOIN files
@@ -629,6 +810,10 @@ class Squirrel(Selection):
             return row[0]
 
     def get_stats(self):
+        '''
+        Get statistics on contents available through this selection.
+        '''
+
         tmin, tmax = self.time_span()
 
         return SquirrelStats(
@@ -646,6 +831,10 @@ class Squirrel(Selection):
 
 
 class DatabaseStats(Object):
+    '''
+    Container to hold statistics about contents cached in meta-information db.
+    '''
+
     nfiles = Int.T()
     nnuts = Int.T()
     codes = List.T(List.T(String.T()))
@@ -655,6 +844,10 @@ class DatabaseStats(Object):
 
 
 class Database(object):
+    '''
+    Shared meta-information database used by squirrel.
+    '''
+
     def __init__(self, database_path=':memory:'):
         self._database_path = database_path
         self._conn = sqlite3.connect(database_path)
@@ -1051,7 +1244,7 @@ class Database(object):
     def __str__(self):
         return str(self.get_stats())
 
-    def print_tables(self, stream=None):
+    def _print_tables(self, stream=None):
         if stream is None:
             stream = sys.stdout
 
