@@ -239,7 +239,7 @@ class MarkerTableView(qw.QTableView):
 
         self.header_menu = qw.QMenu(self)
 
-        show_initially = ['Type', 'Time', 'Magnitude']
+        show_initially = ['Time', 'Label', 'Kind', 'NSLCs']
         self.menu_labels = ['Type', 'Time', 'Magnitude', 'Label', 'Depth [km]',
                             'Latitude/Longitude', 'Kind', 'Distance [km]',
                             'NSLCs', 'Kagan Angle [deg]', 'Event Hash', 'MT']
